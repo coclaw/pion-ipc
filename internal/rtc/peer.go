@@ -6,18 +6,20 @@ import (
 	"sync"
 
 	"github.com/pion/webrtc/v4"
+	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/nicosmd/webrtc-dc-ipc/internal/ipc"
 )
 
 // Peer wraps a single pion PeerConnection.
 type Peer struct {
-	id     string
-	pc     *webrtc.PeerConnection
-	logger *slog.Logger
-	writer *ipc.Writer
-	dcs    map[string]*DataChannel
-	mu     sync.RWMutex
+	id       string
+	pc       *webrtc.PeerConnection
+	logger   *slog.Logger
+	writer   *ipc.Writer
+	dcs      map[string]*DataChannel
+	mu       sync.RWMutex
+	iceState string // 最近一次 ICE connection state
 }
 
 // NewPeer creates a new Peer with a pion PeerConnection.
@@ -54,17 +56,36 @@ func (p *Peer) setupCallbacks() {
 		if c == nil {
 			return
 		}
-		// TODO: emit ice-candidate event via writer
 		p.logger.Debug("ice candidate", "candidate", c.ToJSON().Candidate)
+		init := c.ToJSON()
+		payload, err := msgpack.Marshal(map[string]interface{}{
+			"candidate":     init.Candidate,
+			"sdpMid":        init.SDPMid,
+			"sdpMLineIndex": init.SDPMLineIndex,
+		})
+		if err != nil {
+			p.logger.Warn("failed to encode ice candidate", "error", err)
+			return
+		}
+		_ = p.writer.SendEvent("pc.icecandidate", p.id, "", payload, false)
 	})
 
 	p.pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		p.logger.Info("connection state changed", "state", state.String())
-		// TODO: emit connection-state event via writer
+		payload, err := msgpack.Marshal(map[string]string{
+			"connState": state.String(),
+			"iceState":  p.iceState,
+		})
+		if err != nil {
+			p.logger.Warn("failed to encode connection state", "error", err)
+			return
+		}
+		_ = p.writer.SendEvent("pc.statechange", p.id, "", payload, false)
 	})
 
 	p.pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		p.logger.Info("ice connection state changed", "state", state.String())
+		p.iceState = state.String()
 	})
 
 	p.pc.OnDataChannel(func(dc *webrtc.DataChannel) {
@@ -73,6 +94,14 @@ func (p *Peer) setupCallbacks() {
 		p.mu.Lock()
 		p.dcs[dc.Label()] = wrapped
 		p.mu.Unlock()
+		payload, err := msgpack.Marshal(map[string]bool{
+			"ordered": dc.Ordered(),
+		})
+		if err != nil {
+			p.logger.Warn("failed to encode datachannel info", "error", err)
+			return
+		}
+		_ = p.writer.SendEvent("pc.datachannel", p.id, dc.Label(), payload, false)
 	})
 }
 
@@ -149,6 +178,32 @@ func (p *Peer) GetDataChannel(label string) (*DataChannel, error) {
 		return nil, fmt.Errorf("data channel %q not found", label)
 	}
 	return dc, nil
+}
+
+// SetLocalDescription sets the local SDP.
+func (p *Peer) SetLocalDescription(sdpType, sdp string) error {
+	var t webrtc.SDPType
+	switch sdpType {
+	case "offer":
+		t = webrtc.SDPTypeOffer
+	case "answer":
+		t = webrtc.SDPTypeAnswer
+	default:
+		return fmt.Errorf("unknown sdp type: %s", sdpType)
+	}
+	return p.pc.SetLocalDescription(webrtc.SessionDescription{Type: t, SDP: sdp})
+}
+
+// RestartICE triggers an ICE restart by creating a new offer with ICE restart flag.
+func (p *Peer) RestartICE() (string, error) {
+	offer, err := p.pc.CreateOffer(&webrtc.OfferOptions{ICERestart: true})
+	if err != nil {
+		return "", fmt.Errorf("create restart offer: %w", err)
+	}
+	if err := p.pc.SetLocalDescription(offer); err != nil {
+		return "", fmt.Errorf("set local description: %w", err)
+	}
+	return offer.SDP, nil
 }
 
 // Close closes the PeerConnection and all associated DataChannels.

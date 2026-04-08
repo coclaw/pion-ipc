@@ -32,21 +32,25 @@ func WrapDataChannel(dc *webrtc.DataChannel, pcID string, logger *slog.Logger, w
 func (d *DataChannel) setupCallbacks() {
 	d.dc.OnOpen(func() {
 		d.logger.Info("data channel opened")
-		// TODO: emit dc.open event
+		_ = d.writer.SendEvent("dc.open", d.pcID, d.dc.Label(), nil, false)
 	})
 
 	d.dc.OnClose(func() {
 		d.logger.Info("data channel closed")
-		// TODO: emit dc.close event
+		_ = d.writer.SendEvent("dc.close", d.pcID, d.dc.Label(), nil, false)
 	})
 
 	d.dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-		_ = d.writer.SendEvent("dc.message", d.pcID, d.dc.Label(), msg.Data, msg.IsString == false)
+		_ = d.writer.SendEvent("dc.message", d.pcID, d.dc.Label(), msg.Data, !msg.IsString)
 	})
 
 	d.dc.OnError(func(err error) {
 		d.logger.Error("data channel error", "error", err)
-		// TODO: emit dc.error event
+		_ = d.writer.SendEvent("dc.error", d.pcID, d.dc.Label(), []byte(err.Error()), false)
+	})
+
+	d.dc.OnBufferedAmountLow(func() {
+		_ = d.writer.SendEvent("dc.bufferedamountlow", d.pcID, d.dc.Label(), nil, false)
 	})
 }
 
@@ -63,6 +67,16 @@ func (d *DataChannel) SendText(text string) error {
 // Label returns the DataChannel label.
 func (d *DataChannel) Label() string {
 	return d.dc.Label()
+}
+
+// BufferedAmount returns the current buffered amount.
+func (d *DataChannel) BufferedAmount() uint64 {
+	return d.dc.BufferedAmount()
+}
+
+// SetBufferedAmountLowThreshold sets the threshold for the bufferedamountlow event.
+func (d *DataChannel) SetBufferedAmountLowThreshold(threshold uint64) {
+	d.dc.SetBufferedAmountLowThreshold(threshold)
 }
 
 // Close closes the DataChannel.

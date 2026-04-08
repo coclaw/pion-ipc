@@ -96,6 +96,16 @@ func (s *Service) handleRequest(f *ipc.Frame) {
 		err = s.handleDcSend(f)
 	case "dc.close":
 		err = s.handleDcClose(f)
+	case "dc.setBALT":
+		err = s.handleDcSetBALT(f)
+	case "dc.getBA":
+		err = s.handleDcGetBA(f)
+	case "pc.restartIce":
+		err = s.handlePcRestartIce(f)
+	case "pc.setLocalDesc":
+		err = s.handlePcSetLocalDescription(f)
+	case "ping":
+		err = s.writer.SendResponse(f.Header.ID, true, nil, "")
 	default:
 		err = fmt.Errorf("unknown method: %s", method)
 	}
@@ -276,5 +286,79 @@ func (s *Service) handleDcClose(f *ipc.Frame) error {
 		return err
 	}
 	dc.Close()
+	return s.writer.SendResponse(f.Header.ID, true, nil, "")
+}
+
+type dcSetBALTParams struct {
+	Threshold uint64 `msgpack:"threshold"`
+}
+
+func (s *Service) handleDcSetBALT(f *ipc.Frame) error {
+	pcID := f.Header.PcID
+	dcLabel := f.Header.DcLabel
+	peer, err := s.manager.GetPeer(pcID)
+	if err != nil {
+		return err
+	}
+	dc, err := peer.GetDataChannel(dcLabel)
+	if err != nil {
+		return err
+	}
+	var params dcSetBALTParams
+	if err := msgpack.Unmarshal(f.Payload, &params); err != nil {
+		return fmt.Errorf("decode params: %w", err)
+	}
+	dc.SetBufferedAmountLowThreshold(params.Threshold)
+	return s.writer.SendResponse(f.Header.ID, true, nil, "")
+}
+
+func (s *Service) handleDcGetBA(f *ipc.Frame) error {
+	pcID := f.Header.PcID
+	dcLabel := f.Header.DcLabel
+	peer, err := s.manager.GetPeer(pcID)
+	if err != nil {
+		return err
+	}
+	dc, err := peer.GetDataChannel(dcLabel)
+	if err != nil {
+		return err
+	}
+	payload, err := msgpack.Marshal(map[string]uint64{"bufferedAmount": dc.BufferedAmount()})
+	if err != nil {
+		return err
+	}
+	return s.writer.SendResponse(f.Header.ID, true, payload, "")
+}
+
+func (s *Service) handlePcRestartIce(f *ipc.Frame) error {
+	pcID := f.Header.PcID
+	peer, err := s.manager.GetPeer(pcID)
+	if err != nil {
+		return err
+	}
+	sdp, err := peer.RestartICE()
+	if err != nil {
+		return err
+	}
+	payload, err := msgpack.Marshal(map[string]string{"sdp": sdp})
+	if err != nil {
+		return err
+	}
+	return s.writer.SendResponse(f.Header.ID, true, payload, "")
+}
+
+func (s *Service) handlePcSetLocalDescription(f *ipc.Frame) error {
+	pcID := f.Header.PcID
+	peer, err := s.manager.GetPeer(pcID)
+	if err != nil {
+		return err
+	}
+	var params setRemoteDescParams
+	if err := msgpack.Unmarshal(f.Payload, &params); err != nil {
+		return fmt.Errorf("decode params: %w", err)
+	}
+	if err := peer.SetLocalDescription(params.Type, params.SDP); err != nil {
+		return err
+	}
 	return s.writer.SendResponse(f.Header.ID, true, nil, "")
 }
