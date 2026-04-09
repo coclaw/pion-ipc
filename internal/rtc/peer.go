@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/vmihailenco/msgpack/v5"
@@ -19,7 +20,7 @@ type Peer struct {
 	writer   *ipc.Writer
 	dcs      map[string]*DataChannel
 	mu       sync.RWMutex
-	iceState string // 最近一次 ICE connection state
+	iceState atomic.Value // 最近一次 ICE connection state (string)
 }
 
 // NewPeer creates a new Peer with a pion PeerConnection.
@@ -45,6 +46,7 @@ func NewPeer(id string, iceServers []ICEServer, logger *slog.Logger, writer *ipc
 		writer: writer,
 		dcs:    make(map[string]*DataChannel),
 	}
+	p.iceState.Store("")
 
 	p.setupCallbacks()
 	return p, nil
@@ -67,25 +69,29 @@ func (p *Peer) setupCallbacks() {
 			p.logger.Warn("failed to encode ice candidate", "error", err)
 			return
 		}
-		_ = p.writer.SendEvent("pc.icecandidate", p.id, "", payload, false)
+		if err := p.writer.SendEvent("pc.icecandidate", p.id, "", payload, false); err != nil {
+			p.logger.Warn("failed to send event", "event", "pc.icecandidate", "error", err)
+		}
 	})
 
 	p.pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		p.logger.Info("connection state changed", "state", state.String())
 		payload, err := msgpack.Marshal(map[string]string{
 			"connState": state.String(),
-			"iceState":  p.iceState,
+			"iceState":  p.iceState.Load().(string),
 		})
 		if err != nil {
 			p.logger.Warn("failed to encode connection state", "error", err)
 			return
 		}
-		_ = p.writer.SendEvent("pc.statechange", p.id, "", payload, false)
+		if err := p.writer.SendEvent("pc.statechange", p.id, "", payload, false); err != nil {
+			p.logger.Warn("failed to send event", "event", "pc.statechange", "error", err)
+		}
 	})
 
 	p.pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		p.logger.Info("ice connection state changed", "state", state.String())
-		p.iceState = state.String()
+		p.iceState.Store(state.String())
 	})
 
 	p.pc.OnDataChannel(func(dc *webrtc.DataChannel) {
@@ -101,7 +107,9 @@ func (p *Peer) setupCallbacks() {
 			p.logger.Warn("failed to encode datachannel info", "error", err)
 			return
 		}
-		_ = p.writer.SendEvent("pc.datachannel", p.id, dc.Label(), payload, false)
+		if err := p.writer.SendEvent("pc.datachannel", p.id, dc.Label(), payload, false); err != nil {
+			p.logger.Warn("failed to send event", "event", "pc.datachannel", "error", err)
+		}
 	})
 }
 
@@ -178,6 +186,13 @@ func (p *Peer) GetDataChannel(label string) (*DataChannel, error) {
 		return nil, fmt.Errorf("data channel %q not found", label)
 	}
 	return dc, nil
+}
+
+// RemoveDataChannel removes a DataChannel from the internal map by label.
+func (p *Peer) RemoveDataChannel(label string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.dcs, label)
 }
 
 // SetLocalDescription sets the local SDP.

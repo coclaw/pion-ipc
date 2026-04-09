@@ -32,25 +32,35 @@ func WrapDataChannel(dc *webrtc.DataChannel, pcID string, logger *slog.Logger, w
 func (d *DataChannel) setupCallbacks() {
 	d.dc.OnOpen(func() {
 		d.logger.Info("data channel opened")
-		_ = d.writer.SendEvent("dc.open", d.pcID, d.dc.Label(), nil, false)
+		if err := d.writer.SendEvent("dc.open", d.pcID, d.dc.Label(), nil, false); err != nil {
+			d.logger.Warn("failed to send event", "event", "dc.open", "error", err)
+		}
 	})
 
 	d.dc.OnClose(func() {
 		d.logger.Info("data channel closed")
-		_ = d.writer.SendEvent("dc.close", d.pcID, d.dc.Label(), nil, false)
+		if err := d.writer.SendEvent("dc.close", d.pcID, d.dc.Label(), nil, false); err != nil {
+			d.logger.Warn("failed to send event", "event", "dc.close", "error", err)
+		}
 	})
 
 	d.dc.OnMessage(func(msg webrtc.DataChannelMessage) {
-		_ = d.writer.SendEvent("dc.message", d.pcID, d.dc.Label(), msg.Data, !msg.IsString)
+		if err := d.writer.SendEvent("dc.message", d.pcID, d.dc.Label(), msg.Data, !msg.IsString); err != nil {
+			d.logger.Warn("failed to send event", "event", "dc.message", "error", err)
+		}
 	})
 
 	d.dc.OnError(func(err error) {
 		d.logger.Error("data channel error", "error", err)
-		_ = d.writer.SendEvent("dc.error", d.pcID, d.dc.Label(), []byte(err.Error()), false)
+		if err := d.writer.SendEvent("dc.error", d.pcID, d.dc.Label(), []byte(err.Error()), false); err != nil {
+			d.logger.Warn("failed to send event", "event", "dc.error", "error", err)
+		}
 	})
 
 	d.dc.OnBufferedAmountLow(func() {
-		_ = d.writer.SendEvent("dc.bufferedamountlow", d.pcID, d.dc.Label(), nil, false)
+		if err := d.writer.SendEvent("dc.bufferedamountlow", d.pcID, d.dc.Label(), nil, false); err != nil {
+			d.logger.Warn("failed to send event", "event", "dc.bufferedamountlow", "error", err)
+		}
 	})
 }
 

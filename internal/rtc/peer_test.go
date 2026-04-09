@@ -3,7 +3,6 @@ package rtc
 import (
 	"bytes"
 	"log/slog"
-	"sync"
 	"testing"
 	"time"
 
@@ -163,8 +162,6 @@ func TestPeerConnection_ICERestart_DataChannelSurvives(t *testing.T) {
 	defer pc1.Close()
 	defer pc2.Close()
 
-	// Track messages from both directions
-	var mu sync.Mutex
 	pc2Messages := make(chan string, 10)
 
 	pc2.OnDataChannel(func(dc *webrtc.DataChannel) {
@@ -214,7 +211,6 @@ func TestPeerConnection_ICERestart_DataChannelSurvives(t *testing.T) {
 	}
 
 	// Phase 2: ICE restart
-	_ = mu // suppress unused warning
 	offer, err := pc1.CreateOffer(&webrtc.OfferOptions{ICERestart: true})
 	if err != nil {
 		t.Fatalf("CreateOffer(ICERestart): %v", err)

@@ -38,9 +38,9 @@ Each frame on stdin/stdout:
 | `event`    | string | Event name (events only)                 |
 | `isBinary` | bool   | Whether payload is binary data           |
 
-**Methods**: `pc.create`, `pc.close`, `pc.createOffer`, `pc.createAnswer`, `pc.setRemoteDescription`, `pc.addIceCandidate`, `dc.create`, `dc.send`, `dc.close`
+**Methods**: `pc.create`, `pc.close`, `pc.createOffer`, `pc.createAnswer`, `pc.setRemoteDescription`, `pc.setLocalDescription`, `pc.addIceCandidate`, `pc.restartIce`, `dc.create`, `dc.send`, `dc.close`, `dc.setBALT`, `dc.getBA`, `ping`
 
-**Events**: `dc.message`, connection state changes (TBD)
+**Events**: `pc.icecandidate`, `pc.statechange`, `pc.datachannel`, `dc.open`, `dc.close`, `dc.message`, `dc.error`, `dc.bufferedamountlow`
 
 ## License
 

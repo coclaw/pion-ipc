@@ -102,7 +102,7 @@ func (s *Service) handleRequest(f *ipc.Frame) {
 		err = s.handleDcGetBA(f)
 	case "pc.restartIce":
 		err = s.handlePcRestartIce(f)
-	case "pc.setLocalDesc":
+	case "pc.setLocalDescription":
 		err = s.handlePcSetLocalDescription(f)
 	case "ping":
 		err = s.writer.SendResponse(f.Header.ID, true, nil, "")
@@ -286,6 +286,7 @@ func (s *Service) handleDcClose(f *ipc.Frame) error {
 		return err
 	}
 	dc.Close()
+	peer.RemoveDataChannel(dcLabel)
 	return s.writer.SendResponse(f.Header.ID, true, nil, "")
 }
 
