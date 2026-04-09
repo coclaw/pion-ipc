@@ -3,6 +3,7 @@ package rtc
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -18,9 +19,10 @@ type Peer struct {
 	pc       *webrtc.PeerConnection
 	logger   *slog.Logger
 	writer   *ipc.Writer
-	dcs      map[string]*DataChannel
-	mu       sync.RWMutex
-	iceState atomic.Value // 最近一次 ICE connection state (string)
+	dcs       map[string]*DataChannel
+	mu        sync.RWMutex
+	iceState  atomic.Value // 最近一次 ICE connection state (string)
+	connState atomic.Value // 最近一次 connection state (string)
 }
 
 // NewPeer creates a new Peer with a pion PeerConnection.
@@ -47,6 +49,7 @@ func NewPeer(id string, iceServers []ICEServer, logger *slog.Logger, writer *ipc
 		dcs:    make(map[string]*DataChannel),
 	}
 	p.iceState.Store("")
+	p.connState.Store("")
 
 	p.setupCallbacks()
 	return p, nil
@@ -76,6 +79,7 @@ func (p *Peer) setupCallbacks() {
 
 	p.pc.OnConnectionStateChange(func(state webrtc.PeerConnectionState) {
 		p.logger.Info("connection state changed", "state", state.String())
+		p.connState.Store(state.String())
 		payload, err := msgpack.Marshal(map[string]string{
 			"connState": state.String(),
 			"iceState":  p.iceState.Load().(string),
@@ -87,11 +91,56 @@ func (p *Peer) setupCallbacks() {
 		if err := p.writer.SendEvent("pc.statechange", p.id, "", payload, false); err != nil {
 			p.logger.Warn("failed to send event", "event", "pc.statechange", "error", err)
 		}
+		if state == webrtc.PeerConnectionStateConnected {
+			go p.emitSelectedCandidatePair()
+		}
 	})
 
 	p.pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		p.logger.Info("ice connection state changed", "state", state.String())
 		p.iceState.Store(state.String())
+		payload, err := msgpack.Marshal(map[string]string{
+			"connState": p.connState.Load().(string),
+			"iceState":  state.String(),
+		})
+		if err != nil {
+			p.logger.Warn("failed to encode ice connection state", "error", err)
+			return
+		}
+		if err := p.writer.SendEvent("pc.statechange", p.id, "", payload, false); err != nil {
+			p.logger.Warn("failed to send event", "event", "pc.statechange", "error", err)
+		}
+	})
+
+	p.pc.OnICEGatheringStateChange(func(state webrtc.ICEGatheringState) {
+		stateStr := ""
+		switch state {
+		case webrtc.ICEGatheringStateNew:
+			stateStr = "new"
+		case webrtc.ICEGatheringStateGathering:
+			stateStr = "gathering"
+		case webrtc.ICEGatheringStateComplete:
+			stateStr = "complete"
+		default:
+			stateStr = "unknown"
+		}
+		p.logger.Info("ice gathering state changed", "state", stateStr)
+		payload, err := msgpack.Marshal(map[string]string{"state": stateStr})
+		if err != nil {
+			p.logger.Warn("failed to encode ice gathering state", "error", err)
+			return
+		}
+		_ = p.writer.SendEvent("pc.icegatheringstatechange", p.id, "", payload, false)
+	})
+
+	p.pc.OnSignalingStateChange(func(state webrtc.SignalingState) {
+		p.logger.Info("signaling state changed", "state", state.String())
+		payload, err := msgpack.Marshal(map[string]string{"state": state.String()})
+		if err != nil {
+			p.logger.Warn("failed to encode signaling state", "error", err)
+			return
+		}
+		_ = p.writer.SendEvent("pc.signalingstatechange", p.id, "", payload, false)
 	})
 
 	p.pc.OnDataChannel(func(dc *webrtc.DataChannel) {
@@ -111,6 +160,65 @@ func (p *Peer) setupCallbacks() {
 			p.logger.Warn("failed to send event", "event", "pc.datachannel", "error", err)
 		}
 	})
+}
+
+type candidateInfo struct {
+	Type     string `msgpack:"type"`
+	Address  string `msgpack:"address"`
+	Port     uint16 `msgpack:"port"`
+	Protocol string `msgpack:"protocol"`
+}
+
+type candidatePairPayload struct {
+	Local  candidateInfo `msgpack:"local"`
+	Remote candidateInfo `msgpack:"remote"`
+}
+
+// emitSelectedCandidatePair 获取选中的 ICE candidate pair 并发送事件。
+func (p *Peer) emitSelectedCandidatePair() {
+	sctp := p.pc.SCTP()
+	if sctp == nil {
+		p.logger.Warn("SCTP transport not available for candidate pair")
+		return
+	}
+	dtls := sctp.Transport()
+	if dtls == nil {
+		p.logger.Warn("DTLS transport not available for candidate pair")
+		return
+	}
+	ice := dtls.ICETransport()
+	if ice == nil {
+		p.logger.Warn("ICE transport not available for candidate pair")
+		return
+	}
+	pair, err := ice.GetSelectedCandidatePair()
+	if err != nil || pair == nil {
+		p.logger.Warn("failed to get selected candidate pair", "error", err)
+		return
+	}
+
+	cp := candidatePairPayload{
+		Local: candidateInfo{
+			Type:     pair.Local.Typ.String(),
+			Address:  pair.Local.Address,
+			Port:     pair.Local.Port,
+			Protocol: strings.ToLower(pair.Local.Protocol.String()),
+		},
+		Remote: candidateInfo{
+			Type:     pair.Remote.Typ.String(),
+			Address:  pair.Remote.Address,
+			Port:     pair.Remote.Port,
+			Protocol: strings.ToLower(pair.Remote.Protocol.String()),
+		},
+	}
+	payload, err := msgpack.Marshal(cp)
+	if err != nil {
+		p.logger.Warn("failed to encode candidate pair", "error", err)
+		return
+	}
+	if err := p.writer.SendEvent("pc.selectedcandidatepairchange", p.id, "", payload, false); err != nil {
+		p.logger.Warn("failed to send event", "event", "pc.selectedcandidatepairchange", "error", err)
+	}
 }
 
 // CreateOffer generates an SDP offer.

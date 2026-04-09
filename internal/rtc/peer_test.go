@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/pion/webrtc/v4"
+	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/nicosmd/pion-ipc/internal/ipc"
 )
@@ -378,6 +379,7 @@ func TestPeer_RestartICE(t *testing.T) {
 		dcs:    make(map[string]*DataChannel),
 	}
 	peer.iceState.Store("")
+	peer.connState.Store("")
 	defer peer.Close()
 
 	// Create a DC so the offer has media
@@ -497,5 +499,207 @@ func TestPeer_CreateDataChannel_SameLabel(t *testing.T) {
 	}
 	if dc.Label() != "dup" {
 		t.Errorf("label = %q", dc.Label())
+	}
+}
+
+// waitForEvents 轮询 safeBuffer 直到出现指定事件（可能多个），返回所有匹配帧。
+func waitForEvents(t *testing.T, buf *safeBuffer, eventName string, timeout time.Duration) []*ipc.Frame {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		frames := readAllEvents(buf)
+		var matched []*ipc.Frame
+		for _, f := range frames {
+			if f.Header.Event == eventName {
+				matched = append(matched, f)
+			}
+		}
+		if len(matched) > 0 {
+			return matched
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for event %q", eventName)
+			return nil
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// newWrappedPeerPair 创建一对 Peer wrapper，带事件收集能力。
+// 返回 peer1 (offerer) 及其 safeBuffer，和原始 pc2 (answerer)。
+func newWrappedPeerPair(t *testing.T) (*Peer, *safeBuffer, *webrtc.PeerConnection) {
+	t.Helper()
+	pc1, pc2 := newTestPeerPair(t)
+
+	sb := &safeBuffer{}
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+	writer := ipc.NewWriter(sb)
+
+	peer := &Peer{
+		id:     "test-peer",
+		pc:     pc1,
+		logger: logger.With("pcId", "test-peer"),
+		writer: writer,
+		dcs:    make(map[string]*DataChannel),
+	}
+	peer.iceState.Store("")
+	peer.connState.Store("")
+	peer.setupCallbacks()
+
+	return peer, sb, pc2
+}
+
+// pollConnectionState 轮询等待 PeerConnection 到达指定状态，不覆盖回调。
+func pollConnectionState(t *testing.T, pc *webrtc.PeerConnection, target webrtc.PeerConnectionState, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		if pc.ConnectionState() == target {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for connection state %s (current: %s)", target, pc.ConnectionState())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func TestPeerSelectedCandidatePair(t *testing.T) {
+	peer, sb, pc2 := newWrappedPeerPair(t)
+	defer peer.Close()
+	defer pc2.Close()
+
+	_, err := peer.pc.CreateDataChannel("test", nil)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	doSignaling(t, peer.pc, pc2)
+	pollConnectionState(t, peer.pc, webrtc.PeerConnectionStateConnected, 10*time.Second)
+
+	f := waitForEvent(t, sb, "pc.selectedcandidatepairchange", 10*time.Second)
+
+	var payload candidatePairPayload
+	if err := msgpack.Unmarshal(f.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.Local.Address == "" {
+		t.Error("local address is empty")
+	}
+	if payload.Remote.Address == "" {
+		t.Error("remote address is empty")
+	}
+	if payload.Local.Type == "" {
+		t.Error("local type is empty")
+	}
+	if payload.Local.Protocol == "" {
+		t.Error("local protocol is empty")
+	}
+	if payload.Local.Port == 0 {
+		t.Error("local port is 0")
+	}
+}
+
+func TestPeerICEGatheringState(t *testing.T) {
+	peer, sb, pc2 := newWrappedPeerPair(t)
+	defer peer.Close()
+	defer pc2.Close()
+
+	_, err := peer.pc.CreateDataChannel("test", nil)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	doSignaling(t, peer.pc, pc2)
+	pollConnectionState(t, peer.pc, webrtc.PeerConnectionStateConnected, 10*time.Second)
+
+	events := waitForEvents(t, sb, "pc.icegatheringstatechange", 10*time.Second)
+
+	// 应至少收到 gathering 或 complete
+	states := make(map[string]bool)
+	for _, e := range events {
+		var payload map[string]string
+		if err := msgpack.Unmarshal(e.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		states[payload["state"]] = true
+	}
+
+	if !states["gathering"] && !states["complete"] {
+		t.Errorf("expected gathering or complete state, got: %v", states)
+	}
+}
+
+func TestPeerSignalingState(t *testing.T) {
+	peer, sb, pc2 := newWrappedPeerPair(t)
+	defer peer.Close()
+	defer pc2.Close()
+
+	_, err := peer.pc.CreateDataChannel("test", nil)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	doSignaling(t, peer.pc, pc2)
+
+	// 等待 stable 状态出现（doSignaling 完成后 signaling state 应为 stable）
+	deadline := time.After(5 * time.Second)
+	for {
+		frames := readAllEvents(sb)
+		states := make(map[string]bool)
+		for _, f := range frames {
+			if f.Header.Event != "pc.signalingstatechange" {
+				continue
+			}
+			var payload map[string]string
+			if err := msgpack.Unmarshal(f.Payload, &payload); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			states[payload["state"]] = true
+		}
+		if states["have-local-offer"] && states["stable"] {
+			return // 测试通过
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("timeout waiting for signaling states; have-local-offer=%v, stable=%v",
+				states["have-local-offer"], states["stable"])
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func TestPeerICEConnectionStateIndependent(t *testing.T) {
+	peer, sb, pc2 := newWrappedPeerPair(t)
+	defer peer.Close()
+	defer pc2.Close()
+
+	_, err := peer.pc.CreateDataChannel("test", nil)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	doSignaling(t, peer.pc, pc2)
+	pollConnectionState(t, peer.pc, webrtc.PeerConnectionStateConnected, 10*time.Second)
+
+	// 收集所有 pc.statechange 事件
+	events := waitForEvents(t, sb, "pc.statechange", 10*time.Second)
+
+	// 应有来自 ICE connection state 变化的事件（iceState 非空）
+	hasIceState := false
+	for _, e := range events {
+		var payload map[string]string
+		if err := msgpack.Unmarshal(e.Payload, &payload); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if payload["iceState"] != "" {
+			hasIceState = true
+			break
+		}
+	}
+	if !hasIceState {
+		t.Error("no pc.statechange event with non-empty iceState found (ICE connection state should emit statechange)")
 	}
 }
