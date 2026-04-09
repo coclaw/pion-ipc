@@ -7,8 +7,9 @@ import (
 )
 
 func TestStdoutProtection(t *testing.T) {
-	// Save original stdout
+	// Save original stdout and ensure it's restored even on panic
 	origStdout := os.Stdout
+	t.Cleanup(func() { os.Stdout = origStdout })
 
 	// Create a pipe to capture what fmt.Println writes
 	pr, pw, err := os.Pipe()

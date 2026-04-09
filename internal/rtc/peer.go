@@ -147,6 +147,9 @@ func (p *Peer) setupCallbacks() {
 		p.logger.Info("remote data channel opened", "label", dc.Label())
 		wrapped := WrapDataChannel(dc, p.id, p.logger, p.writer)
 		p.mu.Lock()
+		if old, exists := p.dcs[dc.Label()]; exists {
+			old.Close()
+		}
 		p.dcs[dc.Label()] = wrapped
 		p.mu.Unlock()
 		payload, err := msgpack.Marshal(map[string]bool{
@@ -279,6 +282,9 @@ func (p *Peer) CreateDataChannel(label string, ordered bool) (*DataChannel, erro
 
 	wrapped := WrapDataChannel(dc, p.id, p.logger, p.writer)
 	p.mu.Lock()
+	if old, exists := p.dcs[label]; exists {
+		old.Close()
+	}
 	p.dcs[label] = wrapped
 	p.mu.Unlock()
 	return wrapped, nil

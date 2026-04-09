@@ -486,8 +486,14 @@ func TestService_DcSend(t *testing.T) {
 		Payload: []byte("hello"),
 	}
 	res := env.sendAndReceive(t, req)
-	// The DC is not connected so send may fail, but it should not crash
-	_ = res // response received means service handled it
+	// The DC is not connected so send may fail, but it should not crash.
+	// Verify we got a proper response with the correct ID.
+	if res.Header.Type != ipc.MsgTypeResponse {
+		t.Errorf("type = %q, want %q", res.Header.Type, ipc.MsgTypeResponse)
+	}
+	if res.Header.ID != 92 {
+		t.Errorf("id = %d, want 92", res.Header.ID)
+	}
 }
 
 func TestService_DcSend_PeerNotFound(t *testing.T) {
@@ -651,9 +657,13 @@ func TestService_PcSetLocalDescription(t *testing.T) {
 	})
 	req := ipc.NewRequest(153, "pc.setLocalDescription", "pc-setld", "", ldParams)
 	res := env.sendAndReceive(t, req)
-	// This verifies the method is routed and invoked. Even if Pion rejects
-	// the transition, we get a proper error response (not a crash).
-	_ = res // method is wired up correctly if we got a response
+	// Verify the method is routed and invoked with a proper response.
+	if res.Header.Type != ipc.MsgTypeResponse {
+		t.Errorf("type = %q, want %q", res.Header.Type, ipc.MsgTypeResponse)
+	}
+	if res.Header.ID != 153 {
+		t.Errorf("id = %d, want 153", res.Header.ID)
+	}
 }
 
 func TestService_ConcurrentRequests(t *testing.T) {
