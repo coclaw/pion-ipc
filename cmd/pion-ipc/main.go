@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/nicosmd/webrtc-dc-ipc/internal/ipc"
-	"github.com/nicosmd/webrtc-dc-ipc/internal/service"
+	"github.com/nicosmd/pion-ipc/internal/ipc"
+	"github.com/nicosmd/pion-ipc/internal/service"
 )
 
 func main() {
@@ -47,12 +47,12 @@ func main() {
 		}
 	}()
 
-	logger.Info("webrtc-dc-ipc started")
+	logger.Info("pion-ipc started")
 
 	if err := svc.Run(ctx); err != nil && err != io.EOF {
 		logger.Error("service exited with error", "error", err)
 		os.Exit(1)
 	}
 
-	logger.Info("webrtc-dc-ipc exited")
+	logger.Info("pion-ipc exited")
 }

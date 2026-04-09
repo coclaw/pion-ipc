@@ -9,7 +9,7 @@ import (
 
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/nicosmd/webrtc-dc-ipc/internal/ipc"
+	"github.com/nicosmd/pion-ipc/internal/ipc"
 )
 
 // testEnv sets up a Service connected to in-memory pipes for testing.

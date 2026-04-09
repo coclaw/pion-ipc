@@ -38,12 +38,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: |
-          BINARY=webrtc-dc-ipc
+          BINARY=pion-ipc
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY="${BINARY}.exe"
           fi
-          go build -ldflags="-s -w" -o "${BINARY}" ./cmd/webrtc-dc-ipc
-          ARCHIVE="webrtc-dc-ipc-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+          go build -ldflags="-s -w" -o "${BINARY}" ./cmd/pion-ipc
+          ARCHIVE="pion-ipc-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
           tar czf "${ARCHIVE}" "${BINARY}"
           echo "ARCHIVE=${ARCHIVE}" >> $GITHUB_ENV
 

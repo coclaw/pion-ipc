@@ -1,4 +1,4 @@
-module github.com/nicosmd/webrtc-dc-ipc
+module github.com/nicosmd/pion-ipc
 
 go 1.23.0
 

@@ -8,8 +8,8 @@ import (
 
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/nicosmd/webrtc-dc-ipc/internal/ipc"
-	"github.com/nicosmd/webrtc-dc-ipc/internal/rtc"
+	"github.com/nicosmd/pion-ipc/internal/ipc"
+	"github.com/nicosmd/pion-ipc/internal/rtc"
 )
 
 // Service is the main IPC message router.

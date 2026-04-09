@@ -9,7 +9,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
-	"github.com/nicosmd/webrtc-dc-ipc/internal/ipc"
+	"github.com/nicosmd/pion-ipc/internal/ipc"
 )
 
 // newTestPeerPair creates two raw Pion PeerConnections for local testing.

@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/nicosmd/webrtc-dc-ipc/internal/ipc"
+	"github.com/nicosmd/pion-ipc/internal/ipc"
 )
 
 // Manager manages multiple PeerConnections.

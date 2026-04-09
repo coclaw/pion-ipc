@@ -8,7 +8,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/nicosmd/webrtc-dc-ipc/internal/ipc"
+	"github.com/nicosmd/pion-ipc/internal/ipc"
 )
 
 // Peer wraps a single pion PeerConnection.

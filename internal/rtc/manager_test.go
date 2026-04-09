@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nicosmd/webrtc-dc-ipc/internal/ipc"
+	"github.com/nicosmd/pion-ipc/internal/ipc"
 )
 
 func newTestManager() *Manager {

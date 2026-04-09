@@ -1,4 +1,4 @@
-# webrtc-dc-ipc
+# pion-ipc
 
 A standalone process that exposes WebRTC DataChannel APIs over stdin/stdout binary IPC, built on [Pion WebRTC](https://github.com/pion/webrtc).
 
@@ -7,7 +7,7 @@ Designed to be spawned as a child process by a Node.js (or any other) host. The 
 ## Build
 
 ```bash
-make build        # produces bin/webrtc-dc-ipc
+make build        # produces bin/pion-ipc
 make test         # run tests with race detector
 make lint         # run golangci-lint
 ```
