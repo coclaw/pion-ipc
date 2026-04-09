@@ -229,7 +229,7 @@ func (s *Service) handlePcAddIceCandidate(f *ipc.Frame) error {
 
 type dcCreateParams struct {
 	Label   string `msgpack:"label"`
-	Ordered bool   `msgpack:"ordered"`
+	Ordered *bool  `msgpack:"ordered,omitempty"`
 }
 
 func (s *Service) handleDcCreate(f *ipc.Frame) error {
@@ -245,7 +245,9 @@ func (s *Service) handleDcCreate(f *ipc.Frame) error {
 	if params.Label == "" {
 		return fmt.Errorf("label is required")
 	}
-	if _, err := peer.CreateDataChannel(params.Label, params.Ordered); err != nil {
+	// Default to true (matching WebRTC spec) when omitted.
+	ordered := params.Ordered == nil || *params.Ordered
+	if _, err := peer.CreateDataChannel(params.Label, ordered); err != nil {
 		return err
 	}
 	return s.writer.SendResponse(f.Header.ID, true, nil, "")

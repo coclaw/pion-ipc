@@ -464,6 +464,45 @@ func TestService_DcCreate_MissingLabel(t *testing.T) {
 	}
 }
 
+func TestService_DcCreate_OrderedDefaultTrue(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-dc-ordered", 82)
+
+	// Omit "ordered" field — should default to true (WebRTC spec default).
+	params, _ := msgpack.Marshal(map[string]interface{}{
+		"label": "rpc",
+	})
+	req := ipc.NewRequest(83, "dc.create", "pc-dc-ordered", "", params)
+	res := env.sendAndReceive(t, req)
+	if !res.Header.OK {
+		t.Fatalf("dc.create without ordered failed: %s", res.Header.Error)
+	}
+}
+
+func TestService_DcCreate_OrderedExplicitFalse(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-dc-unordered", 84)
+
+	// Explicit ordered=false should be respected.
+	params, _ := msgpack.Marshal(map[string]interface{}{
+		"label":   "unreliable",
+		"ordered": false,
+	})
+	req := ipc.NewRequest(85, "dc.create", "pc-dc-unordered", "", params)
+	res := env.sendAndReceive(t, req)
+	if !res.Header.OK {
+		t.Fatalf("dc.create with ordered=false failed: %s", res.Header.Error)
+	}
+}
+
 func TestService_DcSend(t *testing.T) {
 	env := newTestEnv()
 	defer env.close()

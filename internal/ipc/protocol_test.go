@@ -132,6 +132,24 @@ func TestEncodeFrame_TooLarge(t *testing.T) {
 	}
 }
 
+func TestEncodeFrame_HeaderTooLarge(t *testing.T) {
+	// Build a header whose msgpack encoding exceeds 0xFFFF (65535) bytes.
+	// Use a very long Method string to inflate the header.
+	f := &Frame{
+		Header: Header{
+			Type:   MsgTypeRequest,
+			Method: strings.Repeat("x", 70000),
+		},
+	}
+	_, err := EncodeFrame(f)
+	if err == nil {
+		t.Fatal("expected error for oversized header")
+	}
+	if !strings.Contains(err.Error(), "header too large") {
+		t.Errorf("error = %q, want 'header too large'", err)
+	}
+}
+
 func TestDecodeFrame_TooShort(t *testing.T) {
 	_, err := DecodeFrame([]byte{0x01})
 	if err == nil {
