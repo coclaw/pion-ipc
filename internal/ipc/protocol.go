@@ -34,7 +34,7 @@ type Header struct {
 	Method   string `msgpack:"method,omitempty"`
 	PcID     string `msgpack:"pcId,omitempty"`
 	DcLabel  string `msgpack:"dcLabel,omitempty"`
-	OK       bool   `msgpack:"ok,omitempty"`
+	OK       bool   `msgpack:"ok"`
 	Error    string `msgpack:"error,omitempty"`
 	Event    string `msgpack:"event,omitempty"`
 	IsBinary bool   `msgpack:"isBinary,omitempty"`
