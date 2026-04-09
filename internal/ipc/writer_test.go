@@ -2,6 +2,8 @@ package ipc
 
 import (
 	"bytes"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -147,6 +149,35 @@ func TestWriter_SendEvent(t *testing.T) {
 	if !bytes.Equal(got.Payload, []byte{0xFF}) {
 		t.Errorf("payload = %x", got.Payload)
 	}
+}
+
+func TestWriter_WriteFrame_WriterError(t *testing.T) {
+	ew := &errWriter{err: fmt.Errorf("broken pipe")}
+	w := NewWriter(ew)
+
+	f := &Frame{
+		Header:  Header{Type: MsgTypeRequest, ID: 1, Method: "ping"},
+		Payload: nil,
+	}
+	err := w.WriteFrame(f)
+	if err == nil {
+		t.Fatal("expected error from writer")
+	}
+	if !strings.Contains(err.Error(), "write frame") {
+		t.Errorf("error = %q, want containing 'write frame'", err)
+	}
+	if !strings.Contains(err.Error(), "broken pipe") {
+		t.Errorf("error = %q, want containing 'broken pipe'", err)
+	}
+}
+
+// errWriter always returns an error on Write.
+type errWriter struct {
+	err error
+}
+
+func (w *errWriter) Write(p []byte) (int, error) {
+	return 0, w.err
 }
 
 // lockedBuffer is a thread-safe bytes.Buffer for concurrent write tests.

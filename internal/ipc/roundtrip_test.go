@@ -170,6 +170,41 @@ func TestRoundtrip_MultipleMessages(t *testing.T) {
 	}
 }
 
+func TestRoundtrip_AllByteValues(t *testing.T) {
+	pr, pw := io.Pipe()
+	w := NewWriter(pw)
+	r := NewReader(pr)
+
+	// Build a payload containing all 256 byte values
+	payload := make([]byte, 256)
+	for i := range payload {
+		payload[i] = byte(i)
+	}
+
+	f := NewRequest(1, "test", "", "", payload)
+
+	go func() {
+		if err := w.WriteFrame(f); err != nil {
+			t.Errorf("WriteFrame: %v", err)
+		}
+		pw.Close()
+	}()
+
+	got, err := r.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame: %v", err)
+	}
+	if !bytes.Equal(got.Payload, payload) {
+		t.Errorf("payload mismatch: got %d bytes", len(got.Payload))
+		for i := range payload {
+			if i >= len(got.Payload) || got.Payload[i] != payload[i] {
+				t.Errorf("first diff at index %d", i)
+				break
+			}
+		}
+	}
+}
+
 func TestRoundtrip_ConcurrentSendReceive(t *testing.T) {
 	pr, pw := io.Pipe()
 	w := NewWriter(pw)

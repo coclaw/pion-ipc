@@ -176,3 +176,73 @@ func TestDecodeFrame_InvalidMsgpack(t *testing.T) {
 		t.Errorf("error = %q", err)
 	}
 }
+
+func TestEncodeFrame_ExactMaxFrameSize(t *testing.T) {
+	// Build a frame whose totalLen (HeaderLenSize + header + payload) == MaxFrameSize.
+	// First encode a minimal header to learn its size.
+	f := &Frame{
+		Header:  Header{Type: MsgTypeRequest},
+		Payload: nil,
+	}
+	probe, err := EncodeFrame(f)
+	if err != nil {
+		t.Fatalf("probe EncodeFrame: %v", err)
+	}
+	// probe length = LengthPrefixSize + totalLen; extract totalLen without payload
+	headerOverhead := len(probe) - LengthPrefixSize // == HeaderLenSize + headerBytes
+	payloadSize := MaxFrameSize - headerOverhead
+	f.Payload = make([]byte, payloadSize)
+	encoded, err := EncodeFrame(f)
+	if err != nil {
+		t.Fatalf("EncodeFrame at exact max: %v", err)
+	}
+	decoded, err := DecodeFrame(encoded[LengthPrefixSize:])
+	if err != nil {
+		t.Fatalf("DecodeFrame: %v", err)
+	}
+	if len(decoded.Payload) != payloadSize {
+		t.Errorf("payload len = %d, want %d", len(decoded.Payload), payloadSize)
+	}
+}
+
+func TestEncodeFrame_MaxFrameSizePlusOne(t *testing.T) {
+	// Same approach, but payload is 1 byte larger → totalLen = MaxFrameSize + 1
+	f := &Frame{
+		Header:  Header{Type: MsgTypeRequest},
+		Payload: nil,
+	}
+	probe, err := EncodeFrame(f)
+	if err != nil {
+		t.Fatalf("probe EncodeFrame: %v", err)
+	}
+	headerOverhead := len(probe) - LengthPrefixSize
+	payloadSize := MaxFrameSize - headerOverhead + 1
+	f.Payload = make([]byte, payloadSize)
+	_, err = EncodeFrame(f)
+	if err == nil {
+		t.Fatal("expected error for MaxFrameSize+1")
+	}
+	if !strings.Contains(err.Error(), "frame too large") {
+		t.Errorf("error = %q, want 'frame too large'", err)
+	}
+}
+
+func TestDecodeFrame_ValidEmptyMsgpackMap(t *testing.T) {
+	// 0x80 is a valid empty msgpack map {}
+	// headerLen=1, header bytes=[0x80]
+	data := []byte{0x01, 0x00, 0x80}
+	f, err := DecodeFrame(data)
+	if err != nil {
+		t.Fatalf("DecodeFrame: %v", err)
+	}
+	// All header fields should be zero values
+	if f.Header.Type != "" {
+		t.Errorf("type = %q, want empty", f.Header.Type)
+	}
+	if f.Header.ID != 0 {
+		t.Errorf("id = %d, want 0", f.Header.ID)
+	}
+	if len(f.Payload) != 0 {
+		t.Errorf("payload len = %d, want 0", len(f.Payload))
+	}
+}

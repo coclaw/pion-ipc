@@ -2,8 +2,10 @@ package rtc
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/nicosmd/pion-ipc/internal/ipc"
@@ -113,6 +115,51 @@ func TestManager_CloseAll(t *testing.T) {
 			t.Errorf("peer %d still exists after CloseAll", i)
 		}
 	}
+}
+
+func TestManager_ConcurrentCreateClose(t *testing.T) {
+	m := newTestManager()
+	defer m.CloseAll()
+
+	const n = 20
+	var wg sync.WaitGroup
+
+	// Concurrent creates
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func(id int) {
+			defer wg.Done()
+			pcID := fmt.Sprintf("pc-%d", id)
+			if err := m.CreatePeer(pcID, nil); err != nil {
+				t.Errorf("CreatePeer(%s): %v", pcID, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// Verify all created
+	for i := 0; i < n; i++ {
+		pcID := fmt.Sprintf("pc-%d", i)
+		if _, err := m.GetPeer(pcID); err != nil {
+			t.Errorf("GetPeer(%s) after create: %v", pcID, err)
+		}
+	}
+
+	// Concurrent close + get
+	wg.Add(n * 2)
+	for i := 0; i < n; i++ {
+		go func(id int) {
+			defer wg.Done()
+			pcID := fmt.Sprintf("pc-%d", id)
+			_ = m.ClosePeer(pcID) // may race, errors are OK
+		}(i)
+		go func(id int) {
+			defer wg.Done()
+			pcID := fmt.Sprintf("pc-%d", id)
+			_, _ = m.GetPeer(pcID) // may or may not find it
+		}(i)
+	}
+	wg.Wait()
 }
 
 func TestManager_CreatePeer_WithICEServers(t *testing.T) {

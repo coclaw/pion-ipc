@@ -358,3 +358,144 @@ func TestPeer_Close(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 }
+
+func TestPeer_RestartICE(t *testing.T) {
+	// RestartICE requires an active ICE agent, which means we need two peers
+	// that have completed signaling.
+	pc1, pc2 := newTestPeerPair(t)
+	defer pc2.Close()
+
+	logBuf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(logBuf, nil))
+	writer := ipc.NewWriter(&bytes.Buffer{})
+
+	// Wrap pc1 as a Peer manually (use its underlying PC)
+	peer := &Peer{
+		id:     "test-peer",
+		pc:     pc1,
+		logger: logger.With("pcId", "test-peer"),
+		writer: writer,
+		dcs:    make(map[string]*DataChannel),
+	}
+	peer.iceState.Store("")
+	defer peer.Close()
+
+	// Create a DC so the offer has media
+	_, err := pc1.CreateDataChannel("test", nil)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	// Do signaling to establish ICE agent
+	doSignaling(t, pc1, pc2)
+	waitForConnectionState(t, pc1, webrtc.PeerConnectionStateConnected, 10*time.Second)
+
+	// Now RestartICE should work
+	sdp, err := peer.RestartICE()
+	if err != nil {
+		t.Fatalf("RestartICE: %v", err)
+	}
+	if sdp == "" {
+		t.Error("RestartICE returned empty SDP")
+	}
+}
+
+func TestPeer_RemoveDataChannel(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+	writer := ipc.NewWriter(&bytes.Buffer{})
+
+	peer, err := NewPeer("test-peer", nil, logger, writer)
+	if err != nil {
+		t.Fatalf("NewPeer: %v", err)
+	}
+	defer peer.Close()
+
+	_, err = peer.CreateDataChannel("rpc", true)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	// Verify it exists
+	_, err = peer.GetDataChannel("rpc")
+	if err != nil {
+		t.Fatalf("GetDataChannel before remove: %v", err)
+	}
+
+	// Remove it
+	peer.RemoveDataChannel("rpc")
+
+	// Should not be found now
+	_, err = peer.GetDataChannel("rpc")
+	if err == nil {
+		t.Fatal("expected error after RemoveDataChannel")
+	}
+}
+
+func TestPeer_Close_ThenCallMethods(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+	writer := ipc.NewWriter(&bytes.Buffer{})
+
+	peer, err := NewPeer("test-peer", nil, logger, writer)
+	if err != nil {
+		t.Fatalf("NewPeer: %v", err)
+	}
+
+	_, err = peer.CreateDataChannel("test", true)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	if err := peer.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// After close, CreateOffer should return an error
+	_, err = peer.CreateOffer()
+	if err == nil {
+		t.Error("expected error from CreateOffer after Close")
+	}
+
+	// CreateAnswer should return an error
+	_, err = peer.CreateAnswer()
+	if err == nil {
+		t.Error("expected error from CreateAnswer after Close")
+	}
+
+	// CreateDataChannel should return an error
+	_, err = peer.CreateDataChannel("new-dc", true)
+	if err == nil {
+		t.Error("expected error from CreateDataChannel after Close")
+	}
+}
+
+func TestPeer_CreateDataChannel_SameLabel(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+	writer := ipc.NewWriter(&bytes.Buffer{})
+
+	peer, err := NewPeer("test-peer", nil, logger, writer)
+	if err != nil {
+		t.Fatalf("NewPeer: %v", err)
+	}
+	defer peer.Close()
+
+	_, err = peer.CreateDataChannel("dup", true)
+	if err != nil {
+		t.Fatalf("first CreateDataChannel: %v", err)
+	}
+
+	// Pion allows creating multiple DCs with the same label (they get different IDs).
+	// Our wrapper stores by label, so the second overwrites the first in the map.
+	_, err = peer.CreateDataChannel("dup", true)
+	if err != nil {
+		t.Fatalf("second CreateDataChannel: %v", err)
+	}
+
+	// GetDataChannel should still work (returns the latest one)
+	dc, err := peer.GetDataChannel("dup")
+	if err != nil {
+		t.Fatalf("GetDataChannel: %v", err)
+	}
+	if dc.Label() != "dup" {
+		t.Errorf("label = %q", dc.Label())
+	}
+}

@@ -3,6 +3,7 @@ package ipc
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -96,6 +97,46 @@ func TestReader_TruncatedPayload(t *testing.T) {
 	if !strings.Contains(err.Error(), "read frame payload") {
 		t.Errorf("error = %q", err)
 	}
+}
+
+func TestReader_ReadError(t *testing.T) {
+	// An io.Reader that returns a non-EOF error
+	errReader := &errOnReadReader{err: fmt.Errorf("disk failure")}
+	reader := NewReader(errReader)
+	_, err := reader.ReadFrame()
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "disk failure") {
+		t.Errorf("error = %q, want containing 'disk failure'", err)
+	}
+}
+
+func TestReader_ZeroLengthFrame(t *testing.T) {
+	// totalLen=0 means 0 bytes of body → DecodeFrame gets empty slice → too short
+	var buf bytes.Buffer
+	length := make([]byte, LengthPrefixSize)
+	binary.LittleEndian.PutUint32(length, 0)
+	buf.Write(length)
+
+	reader := NewReader(&buf)
+	_, err := reader.ReadFrame()
+	if err == nil {
+		t.Fatal("expected error for zero-length frame")
+	}
+	// DecodeFrame with empty data returns "frame too short"
+	if !strings.Contains(err.Error(), "frame too short") {
+		t.Errorf("error = %q", err)
+	}
+}
+
+// errOnReadReader returns a fixed error on every Read call.
+type errOnReadReader struct {
+	err error
+}
+
+func (r *errOnReadReader) Read(p []byte) (int, error) {
+	return 0, r.err
 }
 
 func TestReader_OversizedFrame(t *testing.T) {
