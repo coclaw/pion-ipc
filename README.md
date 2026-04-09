@@ -40,7 +40,7 @@ Each frame on stdin/stdout:
 
 **Methods**: `pc.create`, `pc.close`, `pc.createOffer`, `pc.createAnswer`, `pc.setRemoteDescription`, `pc.setLocalDescription`, `pc.addIceCandidate`, `pc.restartIce`, `dc.create`, `dc.send`, `dc.close`, `dc.setBALT`, `dc.getBA`, `ping`
 
-**Events**: `pc.icecandidate`, `pc.statechange`, `pc.datachannel`, `dc.open`, `dc.close`, `dc.message`, `dc.error`, `dc.bufferedamountlow`
+**Events**: `pc.icecandidate`, `pc.statechange`, `pc.selectedcandidatepairchange`, `pc.icegatheringstatechange`, `pc.signalingstatechange`, `pc.datachannel`, `dc.open`, `dc.close`, `dc.message`, `dc.error`, `dc.bufferedamountlow`
 
 ## License
 
