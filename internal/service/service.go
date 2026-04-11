@@ -273,7 +273,13 @@ func (s *Service) handleDcSend(f *ipc.Frame) error {
 			return err
 		}
 	}
-	return s.writer.SendResponse(f.Header.ID, true, nil, "")
+	// 顺手把 send 之后的 BufferedAmount 带回给调用方，让 Node 侧不用再独立 IPC 查询。
+	// pion-node 的 R 方案依赖这个字段——即每次 send ack 都同步刷新它维护的 _goBufferedBytes。
+	payload, err := msgpack.Marshal(map[string]uint64{"bufferedAmount": dc.BufferedAmount()})
+	if err != nil {
+		return err
+	}
+	return s.writer.SendResponse(f.Header.ID, true, payload, "")
 }
 
 func (s *Service) handleDcClose(f *ipc.Frame) error {
