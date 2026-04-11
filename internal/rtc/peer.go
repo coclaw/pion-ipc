@@ -224,26 +224,22 @@ func (p *Peer) emitSelectedCandidatePair() {
 	}
 }
 
-// CreateOffer generates an SDP offer.
+// CreateOffer generates an SDP offer without applying it.
+// Caller must explicitly call SetLocalDescription to apply.
 func (p *Peer) CreateOffer() (string, error) {
 	offer, err := p.pc.CreateOffer(nil)
 	if err != nil {
 		return "", fmt.Errorf("create offer: %w", err)
 	}
-	if err := p.pc.SetLocalDescription(offer); err != nil {
-		return "", fmt.Errorf("set local description: %w", err)
-	}
 	return offer.SDP, nil
 }
 
-// CreateAnswer generates an SDP answer.
+// CreateAnswer generates an SDP answer without applying it.
+// Caller must explicitly call SetLocalDescription to apply.
 func (p *Peer) CreateAnswer() (string, error) {
 	answer, err := p.pc.CreateAnswer(nil)
 	if err != nil {
 		return "", fmt.Errorf("create answer: %w", err)
-	}
-	if err := p.pc.SetLocalDescription(answer); err != nil {
-		return "", fmt.Errorf("set local description: %w", err)
 	}
 	return answer.SDP, nil
 }
@@ -324,13 +320,11 @@ func (p *Peer) SetLocalDescription(sdpType, sdp string) error {
 }
 
 // RestartICE triggers an ICE restart by creating a new offer with ICE restart flag.
+// Does not apply the offer; caller must call SetLocalDescription explicitly.
 func (p *Peer) RestartICE() (string, error) {
 	offer, err := p.pc.CreateOffer(&webrtc.OfferOptions{ICERestart: true})
 	if err != nil {
 		return "", fmt.Errorf("create restart offer: %w", err)
-	}
-	if err := p.pc.SetLocalDescription(offer); err != nil {
-		return "", fmt.Errorf("set local description: %w", err)
 	}
 	return offer.SDP, nil
 }

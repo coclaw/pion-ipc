@@ -392,6 +392,13 @@ func TestService_PcAddIceCandidate(t *testing.T) {
 	var offerResult map[string]string
 	msgpack.Unmarshal(offerRes.Payload, &offerResult)
 
+	// setLocalDescription on offerer (createOffer no longer auto-applies)
+	setOfferLD, _ := msgpack.Marshal(map[string]interface{}{"type": "offer", "sdp": offerResult["sdp"]})
+	setOfferLDReq := ipc.NewRequest(620, "pc.setLocalDescription", "pc-ice-offerer", "", setOfferLD)
+	if r := env.sendAndReceive(t, setOfferLDReq); !r.Header.OK {
+		t.Fatalf("offerer setLocalDescription failed: %s", r.Header.Error)
+	}
+
 	env.createPeerViaIPC(t, "pc-ice-answerer", 63)
 	setParams, _ := msgpack.Marshal(map[string]interface{}{
 		"type": "offer",
@@ -404,6 +411,13 @@ func TestService_PcAddIceCandidate(t *testing.T) {
 	ansRes := env.sendAndReceive(t, ansReq)
 	var ansResult map[string]string
 	msgpack.Unmarshal(ansRes.Payload, &ansResult)
+
+	// setLocalDescription on answerer (createAnswer no longer auto-applies)
+	setAnsLD, _ := msgpack.Marshal(map[string]interface{}{"type": "answer", "sdp": ansResult["sdp"]})
+	setAnsLDReq := ipc.NewRequest(650, "pc.setLocalDescription", "pc-ice-answerer", "", setAnsLD)
+	if r := env.sendAndReceive(t, setAnsLDReq); !r.Header.OK {
+		t.Fatalf("answerer setLocalDescription failed: %s", r.Header.Error)
+	}
 
 	// Set answer on offerer
 	setAnsParams, _ := msgpack.Marshal(map[string]interface{}{
