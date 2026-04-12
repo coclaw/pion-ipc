@@ -330,13 +330,15 @@ func (p *Peer) RestartICE() (string, error) {
 }
 
 // Close closes the PeerConnection and all associated DataChannels.
+// 先在锁内交换 dcs map 再释放锁，避免慢 pc.Close()（200~400ms）阻塞 GetDataChannel 等。
 func (p *Peer) Close() error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	dcs := p.dcs
+	p.dcs = make(map[string]*DataChannel)
+	p.mu.Unlock()
 
-	for label, dc := range p.dcs {
+	for _, dc := range dcs {
 		dc.Close()
-		delete(p.dcs, label)
 	}
 	return p.pc.Close()
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/nicosmd/pion-ipc/internal/ipc"
 )
@@ -160,6 +161,85 @@ func TestManager_ConcurrentCreateClose(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+// 验证 ClosePeer 不阻塞其他 PC 的 GetPeer。
+// 旧实现在 m.mu.Lock 下调 peer.Close()（200~400ms），会阻塞其他 goroutine 的 RLock。
+func TestManager_ClosePeer_DoesNotBlockGetPeer(t *testing.T) {
+	m := newTestManager()
+
+	if err := m.CreatePeer("pc-1", nil); err != nil {
+		t.Fatalf("CreatePeer(pc-1): %v", err)
+	}
+	if err := m.CreatePeer("pc-2", nil); err != nil {
+		t.Fatalf("CreatePeer(pc-2): %v", err)
+	}
+
+	// 在后台关闭 pc-1（pc.Close 需要 200~400ms）
+	closeDone := make(chan struct{})
+	go func() {
+		_ = m.ClosePeer("pc-1")
+		close(closeDone)
+	}()
+
+	// GetPeer(pc-2) 应在 pc-1 close 完成之前就能返回
+	getPeerDone := make(chan struct{})
+	go func() {
+		// 给 ClosePeer goroutine 一点启动时间
+		<-time.After(10 * time.Millisecond)
+		_, err := m.GetPeer("pc-2")
+		if err != nil {
+			t.Errorf("GetPeer(pc-2) failed: %v", err)
+		}
+		close(getPeerDone)
+	}()
+
+	select {
+	case <-getPeerDone:
+		// 正常——GetPeer 没被阻塞
+	case <-time.After(3 * time.Second):
+		t.Fatal("GetPeer(pc-2) blocked by ClosePeer(pc-1) — lock held during slow close")
+	}
+
+	<-closeDone
+	m.CloseAll()
+}
+
+// 验证 CloseAll 完成后 map 已清空，且不持锁调慢操作。
+func TestManager_CloseAll_DoesNotBlockGetPeer(t *testing.T) {
+	m := newTestManager()
+
+	for i := 0; i < 3; i++ {
+		if err := m.CreatePeer(fmt.Sprintf("pc-%d", i), nil); err != nil {
+			t.Fatalf("CreatePeer: %v", err)
+		}
+	}
+
+	// CloseAll 后台执行
+	closeAllDone := make(chan struct{})
+	go func() {
+		m.CloseAll()
+		close(closeAllDone)
+	}()
+
+	// 新的 CreatePeer 应该不被长时间阻塞
+	createDone := make(chan struct{})
+	go func() {
+		<-time.After(10 * time.Millisecond)
+		// CloseAll 释放锁后 CreatePeer 就能拿到锁
+		_ = m.CreatePeer("pc-new", nil)
+		close(createDone)
+	}()
+
+	select {
+	case <-createDone:
+		// 正常
+	case <-time.After(3 * time.Second):
+		t.Fatal("CreatePeer blocked by CloseAll — lock held during slow close")
+	}
+
+	<-closeAllDone
+	m.CloseAll()
 }
 
 func TestManager_CreatePeer_WithICEServers(t *testing.T) {

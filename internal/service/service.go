@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sync"
 
 	"github.com/vmihailenco/msgpack/v5"
 
@@ -13,11 +14,17 @@ import (
 )
 
 // Service is the main IPC message router.
+// reader goroutine 将请求派发到 per-PC worker goroutine；同 PC 的请求串行执行（FIFO），
+// 不同 PC 的请求完全并行。
 type Service struct {
-	logger  *slog.Logger
-	reader  *ipc.Reader
-	writer  *ipc.Writer
-	manager *rtc.Manager
+	logger   *slog.Logger
+	reader   *ipc.Reader
+	writer   *ipc.Writer
+	manager  *rtc.Manager
+	workersMu sync.Mutex
+	workers   map[string]*pcWorker
+	stopped   bool // 受 workersMu 保护，阻止 shutdown 后创建新 worker
+	workerWg  sync.WaitGroup
 }
 
 // New creates a new Service.
@@ -27,12 +34,17 @@ func New(logger *slog.Logger, reader *ipc.Reader, writer *ipc.Writer) *Service {
 		reader:  reader,
 		writer:  writer,
 		manager: rtc.NewManager(logger, writer),
+		workers: make(map[string]*pcWorker),
 	}
 }
 
 // Run starts the IPC message loop. It blocks until ctx is cancelled or stdin is closed.
 func (s *Service) Run(ctx context.Context) error {
-	defer s.manager.CloseAll()
+	defer func() {
+		s.closeAllWorkers()
+		s.workerWg.Wait()
+		s.manager.CloseAll()
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -62,10 +74,89 @@ func (s *Service) Run(ctx context.Context) error {
 func (s *Service) handleFrame(f *ipc.Frame) {
 	switch f.Header.Type {
 	case ipc.MsgTypeRequest:
-		s.handleRequest(f)
+		s.dispatchRequest(f)
 	default:
 		s.logger.Warn("ignoring unknown message type", "type", f.Header.Type)
 	}
+}
+
+// dispatchRequest 将请求派发到对应 PC 的 worker goroutine。
+// 主要由 reader goroutine 调用；workersMu 保护 workers map 以协调 shutdown 路径。
+func (s *Service) dispatchRequest(f *ipc.Frame) {
+	method := f.Header.Method
+
+	// 无 pcID 的方法直接在 reader goroutine 处理（μs 级）
+	if method == "ping" {
+		s.handleRequest(f)
+		return
+	}
+
+	// pc.create: pcID 在 payload 中，需要轻量解码后创建 worker
+	if method == "pc.create" {
+		s.dispatchPcCreate(f)
+		return
+	}
+
+	// 其他方法：根据 header.pcId 路由到对应 worker
+	pcID := f.Header.PcID
+
+	s.workersMu.Lock()
+	w, ok := s.workers[pcID]
+	if !ok {
+		s.workersMu.Unlock()
+		s.logger.Warn("no worker for pcId", "pcId", pcID, "method", method, "reqId", f.Header.ID)
+		_ = s.writer.SendResponse(f.Header.ID, false, nil, fmt.Sprintf("peer %q not found", pcID))
+		return
+	}
+	w.queue <- f
+	if method == "pc.close" {
+		close(w.queue)
+		delete(s.workers, pcID)
+	}
+	s.workersMu.Unlock()
+}
+
+// dispatchPcCreate 处理 pc.create 的派发：从 payload 提取 pcID，创建 worker。
+func (s *Service) dispatchPcCreate(f *ipc.Frame) {
+	var params struct {
+		PcID string `msgpack:"pcId"`
+	}
+	if err := msgpack.Unmarshal(f.Payload, &params); err != nil || params.PcID == "" {
+		// 解码失败或 pcID 为空——inline 处理，handleRequest 会返回合适的错误
+		s.handleRequest(f)
+		return
+	}
+
+	s.workersMu.Lock()
+	if s.stopped {
+		s.workersMu.Unlock()
+		_ = s.writer.SendResponse(f.Header.ID, false, nil, "service is shutting down")
+		return
+	}
+	w, exists := s.workers[params.PcID]
+	if !exists {
+		w = newPcWorker(params.PcID, s)
+		s.workers[params.PcID] = w
+		s.workerWg.Add(1)
+		go func() {
+			defer s.workerWg.Done()
+			w.run()
+		}()
+	}
+	w.queue <- f
+	s.workersMu.Unlock()
+}
+
+// closeAllWorkers 标记 stopped 并关闭所有 worker 的 queue channel，使其 goroutine 退出。
+// stopped 标记防止 reader goroutine 在 shutdown 后创建新 worker（避免 WaitGroup 竞态）。
+func (s *Service) closeAllWorkers() {
+	s.workersMu.Lock()
+	s.stopped = true
+	for pcID, w := range s.workers {
+		close(w.queue)
+		delete(s.workers, pcID)
+	}
+	s.workersMu.Unlock()
 }
 
 // handleRequest routes a request to the appropriate handler based on method name.

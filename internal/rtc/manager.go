@@ -57,35 +57,37 @@ func (m *Manager) GetPeer(pcID string) (*Peer, error) {
 }
 
 // ClosePeer closes and removes the PeerConnection with the given ID.
+// 先从 map 删除再释放锁，避免慢 peer.Close()（200~400ms）阻塞其他 PC 的 GetPeer。
 func (m *Manager) ClosePeer(pcID string) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	peer, ok := m.peers[pcID]
 	if !ok {
+		m.mu.Unlock()
 		return fmt.Errorf("peer %q not found", pcID)
 	}
+	delete(m.peers, pcID)
+	m.mu.Unlock()
 
 	if err := peer.Close(); err != nil {
 		m.logger.Warn("error closing peer", "pcId", pcID, "error", err)
 	}
-
-	delete(m.peers, pcID)
 	m.logger.Info("peer closed", "pcId", pcID)
 	return nil
 }
 
 // CloseAll closes all PeerConnections.
+// 先收集并清空 map 再释放锁，避免慢 peer.Close() 阻塞其他操作。
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	peers := m.peers
+	m.peers = make(map[string]*Peer)
+	m.mu.Unlock()
 
-	for id, peer := range m.peers {
+	for id, peer := range peers {
 		if err := peer.Close(); err != nil {
 			m.logger.Warn("error closing peer during shutdown", "pcId", id, "error", err)
 		}
 	}
-	m.peers = make(map[string]*Peer)
 	m.logger.Info("all peers closed")
 }
 

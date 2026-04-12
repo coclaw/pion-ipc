@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -765,6 +766,93 @@ func TestService_ConcurrentRequests(t *testing.T) {
 		case <-deadline:
 			t.Fatalf("timeout: received %d/%d responses", received, n)
 		}
+	}
+}
+
+// 验证多 PC 各有独立 worker，互不阻塞。
+func TestService_MultiPC_IndependentWorkers(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-a", 300)
+	env.createPeerViaIPC(t, "pc-b", 301)
+	env.createDCViaIPC(t, "pc-a", "rpc", 302)
+	env.createDCViaIPC(t, "pc-b", "rpc", 303)
+
+	// 对两个 PC 分别操作
+	baReqA := &ipc.Frame{Header: ipc.Header{Type: ipc.MsgTypeRequest, ID: 304, Method: "dc.getBA", PcID: "pc-a", DcLabel: "rpc"}}
+	resA := env.sendAndReceive(t, baReqA)
+	if !resA.Header.OK {
+		t.Errorf("dc.getBA on pc-a failed: %s", resA.Header.Error)
+	}
+
+	baReqB := &ipc.Frame{Header: ipc.Header{Type: ipc.MsgTypeRequest, ID: 305, Method: "dc.getBA", PcID: "pc-b", DcLabel: "rpc"}}
+	resB := env.sendAndReceive(t, baReqB)
+	if !resB.Header.OK {
+		t.Errorf("dc.getBA on pc-b failed: %s", resB.Header.Error)
+	}
+
+	// 关闭 pc-a 后 pc-b 仍可用
+	closeA := ipc.NewRequest(306, "pc.close", "pc-a", "", nil)
+	resCloseA := env.sendAndReceive(t, closeA)
+	if !resCloseA.Header.OK {
+		t.Errorf("pc.close pc-a failed: %s", resCloseA.Header.Error)
+	}
+
+	baReqB2 := &ipc.Frame{Header: ipc.Header{Type: ipc.MsgTypeRequest, ID: 307, Method: "dc.getBA", PcID: "pc-b", DcLabel: "rpc"}}
+	resB2 := env.sendAndReceive(t, baReqB2)
+	if !resB2.Header.OK {
+		t.Errorf("dc.getBA on pc-b after pc-a closed failed: %s", resB2.Header.Error)
+	}
+}
+
+// 验证 pc.close 后 worker 被清理，后续请求返回 not found。
+func TestService_PostClose_WorkerRemoved(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-post", 310)
+	env.createDCViaIPC(t, "pc-post", "rpc", 311)
+
+	closeReq := ipc.NewRequest(312, "pc.close", "pc-post", "", nil)
+	env.sendAndReceive(t, closeReq)
+
+	// 对已关闭的 PC 发请求——dispatcher 直接返回 not found
+	req := &ipc.Frame{Header: ipc.Header{Type: ipc.MsgTypeRequest, ID: 313, Method: "dc.getBA", PcID: "pc-post", DcLabel: "rpc"}}
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected error for request to closed PC")
+	}
+	if !strings.Contains(res.Header.Error, "not found") {
+		t.Errorf("error = %q, want to contain 'not found'", res.Header.Error)
+	}
+}
+
+// 验证 pc.create 后 pc.close 再 pc.create 同 pcID——worker 应被重建。
+func TestService_RecreateAfterClose(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	// 第一次创建和关闭
+	env.createPeerViaIPC(t, "pc-reuse", 320)
+	closeReq := ipc.NewRequest(321, "pc.close", "pc-reuse", "", nil)
+	env.sendAndReceive(t, closeReq)
+
+	// 重新创建同 pcID
+	env.createPeerViaIPC(t, "pc-reuse", 322)
+	env.createDCViaIPC(t, "pc-reuse", "rpc", 323)
+
+	// 新的 PC 应正常工作
+	baReq := &ipc.Frame{Header: ipc.Header{Type: ipc.MsgTypeRequest, ID: 324, Method: "dc.getBA", PcID: "pc-reuse", DcLabel: "rpc"}}
+	res := env.sendAndReceive(t, baReq)
+	if !res.Header.OK {
+		t.Fatalf("dc.getBA after recreate failed: %s", res.Header.Error)
 	}
 }
 
