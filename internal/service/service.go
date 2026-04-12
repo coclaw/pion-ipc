@@ -9,13 +9,13 @@ import (
 
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/nicosmd/pion-ipc/internal/ipc"
-	"github.com/nicosmd/pion-ipc/internal/rtc"
+	"github.com/coclaw/pion-ipc/internal/ipc"
+	"github.com/coclaw/pion-ipc/internal/rtc"
 )
 
 // Service is the main IPC message router.
-// reader goroutine 将请求派发到 per-PC worker goroutine；同 PC 的请求串行执行（FIFO），
-// 不同 PC 的请求完全并行。
+// The reader goroutine dispatches requests to per-PC worker goroutines;
+// requests for the same PC are executed serially (FIFO), while different PCs run in parallel.
 type Service struct {
 	logger   *slog.Logger
 	reader   *ipc.Reader
@@ -23,7 +23,7 @@ type Service struct {
 	manager  *rtc.Manager
 	workersMu sync.Mutex
 	workers   map[string]*pcWorker
-	stopped   bool // 受 workersMu 保护，阻止 shutdown 后创建新 worker
+	stopped   bool // guarded by workersMu; prevents new worker creation after shutdown
 	workerWg  sync.WaitGroup
 }
 
@@ -80,24 +80,24 @@ func (s *Service) handleFrame(f *ipc.Frame) {
 	}
 }
 
-// dispatchRequest 将请求派发到对应 PC 的 worker goroutine。
-// 主要由 reader goroutine 调用；workersMu 保护 workers map 以协调 shutdown 路径。
+// dispatchRequest routes requests to the per-PC worker goroutine.
+// Called from the reader goroutine; workersMu guards the workers map for shutdown coordination.
 func (s *Service) dispatchRequest(f *ipc.Frame) {
 	method := f.Header.Method
 
-	// 无 pcID 的方法直接在 reader goroutine 处理（μs 级）
+	// Methods without pcID are handled inline in the reader goroutine (μs-level)
 	if method == "ping" {
 		s.handleRequest(f)
 		return
 	}
 
-	// pc.create: pcID 在 payload 中，需要轻量解码后创建 worker
+	// pc.create: pcID is in the payload; light decode then create/route to worker
 	if method == "pc.create" {
 		s.dispatchPcCreate(f)
 		return
 	}
 
-	// 其他方法：根据 header.pcId 路由到对应 worker
+	// Other methods: route to worker by header.pcId
 	pcID := f.Header.PcID
 
 	s.workersMu.Lock()
@@ -116,13 +116,13 @@ func (s *Service) dispatchRequest(f *ipc.Frame) {
 	s.workersMu.Unlock()
 }
 
-// dispatchPcCreate 处理 pc.create 的派发：从 payload 提取 pcID，创建 worker。
+// dispatchPcCreate handles pc.create dispatch: extracts pcID from payload and creates a worker.
 func (s *Service) dispatchPcCreate(f *ipc.Frame) {
 	var params struct {
 		PcID string `msgpack:"pcId"`
 	}
 	if err := msgpack.Unmarshal(f.Payload, &params); err != nil || params.PcID == "" {
-		// 解码失败或 pcID 为空——inline 处理，handleRequest 会返回合适的错误
+		// Decode failed or pcID empty — handle inline; handleRequest returns the appropriate error
 		s.handleRequest(f)
 		return
 	}
@@ -147,8 +147,8 @@ func (s *Service) dispatchPcCreate(f *ipc.Frame) {
 	s.workersMu.Unlock()
 }
 
-// closeAllWorkers 标记 stopped 并关闭所有 worker 的 queue channel，使其 goroutine 退出。
-// stopped 标记防止 reader goroutine 在 shutdown 后创建新 worker（避免 WaitGroup 竞态）。
+// closeAllWorkers marks stopped and closes all worker queue channels so their goroutines exit.
+// The stopped flag prevents the reader goroutine from creating new workers after shutdown (avoids WaitGroup race).
 func (s *Service) closeAllWorkers() {
 	s.workersMu.Lock()
 	s.stopped = true
@@ -364,8 +364,8 @@ func (s *Service) handleDcSend(f *ipc.Frame) error {
 			return err
 		}
 	}
-	// 顺手把 send 之后的 BufferedAmount 带回给调用方，让 Node 侧不用再独立 IPC 查询。
-	// pion-node 的 R 方案依赖这个字段——即每次 send ack 都同步刷新它维护的 _goBufferedBytes。
+	// Return the post-send BufferedAmount in the ack payload so the caller can
+	// track SCTP buffer depth without a separate dc.getBA round-trip.
 	payload, err := msgpack.Marshal(map[string]uint64{"bufferedAmount": dc.BufferedAmount()})
 	if err != nil {
 		return err

@@ -1,4 +1,4 @@
-module github.com/nicosmd/pion-ipc
+module github.com/coclaw/pion-ipc
 
 go 1.23.0
 

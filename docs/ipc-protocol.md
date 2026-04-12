@@ -1,6 +1,6 @@
 # IPC Protocol Specification
 
-This document defines the binary framing protocol used for communication between the pion-ipc Go process and its host process (e.g., pion-node) over stdin/stdout.
+This document defines the binary framing protocol used for communication between the pion-ipc Go process and its host process over stdin/stdout.
 
 ## Frame Format
 
@@ -84,7 +84,7 @@ Close and remove a PeerConnection and all its DataChannels.
 
 ### pc.createOffer
 
-Create an SDP offer and set it as the local description.
+Create an SDP offer without applying it. The caller must call `pc.setLocalDescription` separately.
 
 | | |
 |---|---|
@@ -94,7 +94,7 @@ Create an SDP offer and set it as the local description.
 
 ### pc.createAnswer
 
-Create an SDP answer and set it as the local description.
+Create an SDP answer without applying it. The caller must call `pc.setLocalDescription` separately.
 
 | | |
 |---|---|
@@ -134,7 +134,7 @@ Add a remote ICE candidate.
 
 ### pc.restartIce
 
-Trigger an ICE restart by creating a new offer with the ICE restart flag and setting it as the local description.
+Trigger an ICE restart by creating a new offer with the ICE restart flag. Does not apply it; the caller must call `pc.setLocalDescription` separately.
 
 | | |
 |---|---|
@@ -152,7 +152,7 @@ Create a new DataChannel on a PeerConnection.
 | **Payload** | msgpack: `{ label: string, ordered: bool }` |
 | **Response** | No payload |
 
-Note: `ordered` uses omitempty — `false` will be omitted from the wire, and the Go side defaults to the zero value. The JS SDK explicitly sends this field.
+Note: `ordered` uses omitempty — `false` will be omitted from the wire, and the Go side defaults to the zero value. Callers should explicitly include this field.
 
 ### dc.send
 
@@ -162,7 +162,7 @@ Send data through a DataChannel.
 |---|---|
 | **Header** | `pcId`: required, `dcLabel`: required, `isBinary`: true if sending binary data |
 | **Payload** | Raw bytes (text or binary depending on `isBinary`) |
-| **Response** | No payload |
+| **Response** | msgpack: `{ bufferedAmount: uint64 }` — the SCTP buffered amount after this send |
 
 When `isBinary` is absent/false, the payload is treated as a UTF-8 text message. When `isBinary` is true, it is sent as binary.
 

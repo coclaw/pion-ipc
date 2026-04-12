@@ -9,8 +9,8 @@ import (
 
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/nicosmd/pion-ipc/internal/ipc"
-	"github.com/nicosmd/pion-ipc/internal/rtc"
+	"github.com/coclaw/pion-ipc/internal/ipc"
+	"github.com/coclaw/pion-ipc/internal/rtc"
 )
 
 // TestWorker_PanicRecovery 验证 worker 的 panic 恢复：handler panic 后发送错误响应，

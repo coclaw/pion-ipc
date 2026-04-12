@@ -3,14 +3,14 @@ package service
 import (
 	"log/slog"
 
-	"github.com/nicosmd/pion-ipc/internal/ipc"
+	"github.com/coclaw/pion-ipc/internal/ipc"
 )
 
 const workerQueueSize = 256
 
-// pcWorker 处理单个 PeerConnection 的所有 RPC 请求。
-// 同一 PC 的请求在 worker goroutine 内串行执行，保证 FIFO 语义；
-// 不同 PC 的 worker 完全并行。
+// pcWorker handles all RPC requests for a single PeerConnection.
+// Requests are executed serially (FIFO) within the worker goroutine;
+// workers for different PCs run fully in parallel.
 type pcWorker struct {
 	pcID   string
 	queue  chan *ipc.Frame
@@ -27,7 +27,7 @@ func newPcWorker(pcID string, svc *Service) *pcWorker {
 	}
 }
 
-// run 是 worker goroutine 的主循环。queue 关闭后自动退出。
+// run is the worker goroutine main loop. Exits when the queue channel is closed.
 func (w *pcWorker) run() {
 	w.logger.Info("worker started")
 	defer w.logger.Info("worker exited")
@@ -37,7 +37,7 @@ func (w *pcWorker) run() {
 	}
 }
 
-// processFrame 处理单个请求帧，带 panic 恢复。
+// processFrame handles a single request frame with panic recovery.
 func (w *pcWorker) processFrame(f *ipc.Frame) {
 	defer func() {
 		if r := recover(); r != nil {

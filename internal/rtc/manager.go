@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/nicosmd/pion-ipc/internal/ipc"
+	"github.com/coclaw/pion-ipc/internal/ipc"
 )
 
 // Manager manages multiple PeerConnections.
@@ -57,7 +57,7 @@ func (m *Manager) GetPeer(pcID string) (*Peer, error) {
 }
 
 // ClosePeer closes and removes the PeerConnection with the given ID.
-// 先从 map 删除再释放锁，避免慢 peer.Close()（200~400ms）阻塞其他 PC 的 GetPeer。
+// Deletes from map before releasing the lock so the slow peer.Close() (200-400ms) doesn't block other PCs.
 func (m *Manager) ClosePeer(pcID string) error {
 	m.mu.Lock()
 	peer, ok := m.peers[pcID]
@@ -76,7 +76,7 @@ func (m *Manager) ClosePeer(pcID string) error {
 }
 
 // CloseAll closes all PeerConnections.
-// 先收集并清空 map 再释放锁，避免慢 peer.Close() 阻塞其他操作。
+// Collects and clears the map under lock, then closes outside the lock to avoid blocking.
 func (m *Manager) CloseAll() {
 	m.mu.Lock()
 	peers := m.peers

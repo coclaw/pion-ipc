@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/nicosmd/pion-ipc/internal/ipc"
-	"github.com/nicosmd/pion-ipc/internal/service"
+	"github.com/coclaw/pion-ipc/internal/ipc"
+	"github.com/coclaw/pion-ipc/internal/service"
 )
 
 func main() {

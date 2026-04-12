@@ -10,7 +10,7 @@ import (
 	"github.com/pion/webrtc/v4"
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/nicosmd/pion-ipc/internal/ipc"
+	"github.com/coclaw/pion-ipc/internal/ipc"
 )
 
 // Peer wraps a single pion PeerConnection.
@@ -21,8 +21,8 @@ type Peer struct {
 	writer   *ipc.Writer
 	dcs       map[string]*DataChannel
 	mu        sync.RWMutex
-	iceState  atomic.Value // 最近一次 ICE connection state (string)
-	connState atomic.Value // 最近一次 connection state (string)
+	iceState  atomic.Value // latest ICE connection state (string)
+	connState atomic.Value // latest connection state (string)
 }
 
 // NewPeer creates a new Peer with a pion PeerConnection.
@@ -177,7 +177,7 @@ type candidatePairPayload struct {
 	Remote candidateInfo `msgpack:"remote"`
 }
 
-// emitSelectedCandidatePair 获取选中的 ICE candidate pair 并发送事件。
+// emitSelectedCandidatePair retrieves the selected ICE candidate pair and emits an IPC event.
 func (p *Peer) emitSelectedCandidatePair() {
 	sctp := p.pc.SCTP()
 	if sctp == nil {
@@ -330,7 +330,7 @@ func (p *Peer) RestartICE() (string, error) {
 }
 
 // Close closes the PeerConnection and all associated DataChannels.
-// 先在锁内交换 dcs map 再释放锁，避免慢 pc.Close()（200~400ms）阻塞 GetDataChannel 等。
+// Swaps the dcs map under lock then releases it, so the slow pc.Close() (200-400ms) doesn't block GetDataChannel.
 func (p *Peer) Close() error {
 	p.mu.Lock()
 	dcs := p.dcs

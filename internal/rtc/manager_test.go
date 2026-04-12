@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nicosmd/pion-ipc/internal/ipc"
+	"github.com/coclaw/pion-ipc/internal/ipc"
 )
 
 func newTestManager() *Manager {

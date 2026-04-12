@@ -5,7 +5,7 @@ import (
 
 	"github.com/pion/webrtc/v4"
 
-	"github.com/nicosmd/pion-ipc/internal/ipc"
+	"github.com/coclaw/pion-ipc/internal/ipc"
 )
 
 // DataChannel wraps a pion DataChannel with IPC event emission.
