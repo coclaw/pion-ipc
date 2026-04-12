@@ -72,6 +72,16 @@ for entry in "${PLATFORMS[@]}"; do
 		sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" "$pkg_dir/package.json"
 	fi
 
+	# Copy LICENSE and generate README
+	cp "$ROOT_DIR/LICENSE" "$pkg_dir/LICENSE" 2>/dev/null || true
+	cat > "$pkg_dir/README.md" <<READMEEOF
+# ${full_pkg_name}
+
+Platform-specific binary of [pion-ipc](https://github.com/coclaw/pion-ipc) for ${npm_name}.
+
+This package is installed automatically by [\`@coclaw/pion-node\`](https://github.com/coclaw/pion-node) via \`optionalDependencies\`. You should not need to install it directly.
+READMEEOF
+
 	# Cross-compile
 	mkdir -p "$bin_dir"
 	if [ "$DRY_RUN" = true ]; then
