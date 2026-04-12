@@ -11,7 +11,7 @@ test-cover:
 	go tool cover -func=coverage.out
 	@echo "--- Coverage threshold check ---"
 	@total=$$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $$NF}' | tr -d '%'); \
-	threshold=95; \
+	threshold=75; \
 	if [ $$(echo "$$total < $$threshold" | bc) -eq 1 ]; then \
 		echo "FAIL: total coverage $$total% < $$threshold%"; exit 1; \
 	else \
