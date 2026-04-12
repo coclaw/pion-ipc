@@ -769,7 +769,7 @@ func TestService_ConcurrentRequests(t *testing.T) {
 	}
 }
 
-// 验证多 PC 各有独立 worker，互不阻塞。
+// Verify each PC has an independent worker; they do not block each other.
 func TestService_MultiPC_IndependentWorkers(t *testing.T) {
 	env := newTestEnv()
 	defer env.close()
@@ -781,7 +781,7 @@ func TestService_MultiPC_IndependentWorkers(t *testing.T) {
 	env.createDCViaIPC(t, "pc-a", "rpc", 302)
 	env.createDCViaIPC(t, "pc-b", "rpc", 303)
 
-	// 对两个 PC 分别操作
+	// Operate on both PCs separately
 	baReqA := &ipc.Frame{Header: ipc.Header{Type: ipc.MsgTypeRequest, ID: 304, Method: "dc.getBA", PcID: "pc-a", DcLabel: "rpc"}}
 	resA := env.sendAndReceive(t, baReqA)
 	if !resA.Header.OK {
@@ -794,7 +794,7 @@ func TestService_MultiPC_IndependentWorkers(t *testing.T) {
 		t.Errorf("dc.getBA on pc-b failed: %s", resB.Header.Error)
 	}
 
-	// 关闭 pc-a 后 pc-b 仍可用
+	// pc-b should still work after closing pc-a
 	closeA := ipc.NewRequest(306, "pc.close", "pc-a", "", nil)
 	resCloseA := env.sendAndReceive(t, closeA)
 	if !resCloseA.Header.OK {
@@ -808,7 +808,7 @@ func TestService_MultiPC_IndependentWorkers(t *testing.T) {
 	}
 }
 
-// 验证 pc.close 后 worker 被清理，后续请求返回 not found。
+// Verify worker is removed after pc.close; subsequent requests return not found.
 func TestService_PostClose_WorkerRemoved(t *testing.T) {
 	env := newTestEnv()
 	defer env.close()
@@ -821,7 +821,7 @@ func TestService_PostClose_WorkerRemoved(t *testing.T) {
 	closeReq := ipc.NewRequest(312, "pc.close", "pc-post", "", nil)
 	env.sendAndReceive(t, closeReq)
 
-	// 对已关闭的 PC 发请求——dispatcher 直接返回 not found
+	// Request to a closed PC — dispatcher returns not found
 	req := &ipc.Frame{Header: ipc.Header{Type: ipc.MsgTypeRequest, ID: 313, Method: "dc.getBA", PcID: "pc-post", DcLabel: "rpc"}}
 	res := env.sendAndReceive(t, req)
 	if res.Header.OK {
@@ -832,23 +832,23 @@ func TestService_PostClose_WorkerRemoved(t *testing.T) {
 	}
 }
 
-// 验证 pc.create 后 pc.close 再 pc.create 同 pcID——worker 应被重建。
+// Verify recreating the same pcID after close rebuilds the worker.
 func TestService_RecreateAfterClose(t *testing.T) {
 	env := newTestEnv()
 	defer env.close()
 
 	go env.svc.Run(t.Context())
 
-	// 第一次创建和关闭
+	// First create and close
 	env.createPeerViaIPC(t, "pc-reuse", 320)
 	closeReq := ipc.NewRequest(321, "pc.close", "pc-reuse", "", nil)
 	env.sendAndReceive(t, closeReq)
 
-	// 重新创建同 pcID
+	// Recreate with same pcID
 	env.createPeerViaIPC(t, "pc-reuse", 322)
 	env.createDCViaIPC(t, "pc-reuse", "rpc", 323)
 
-	// 新的 PC 应正常工作
+	// The new PC should work normally
 	baReq := &ipc.Frame{Header: ipc.Header{Type: ipc.MsgTypeRequest, ID: 324, Method: "dc.getBA", PcID: "pc-reuse", DcLabel: "rpc"}}
 	res := env.sendAndReceive(t, baReq)
 	if !res.Header.OK {

@@ -13,8 +13,8 @@ import (
 	"github.com/coclaw/pion-ipc/internal/rtc"
 )
 
-// TestWorker_PanicRecovery 验证 worker 的 panic 恢复：handler panic 后发送错误响应，
-// 后续请求仍可正常处理。
+// TestWorker_PanicRecovery verifies panic recovery: after a handler panics,
+// an error response is sent and subsequent requests still work.
 func TestWorker_PanicRecovery(t *testing.T) {
 	outBuf := &bytes.Buffer{}
 	writer := ipc.NewWriter(outBuf)
@@ -23,17 +23,17 @@ func TestWorker_PanicRecovery(t *testing.T) {
 	svc := &Service{
 		logger:  logger,
 		writer:  writer,
-		manager: nil, // nil manager → GetPeer 时 nil deref → panic
+		manager: nil, // nil manager → GetPeer nil deref → panic
 		workers: make(map[string]*pcWorker),
 	}
 
 	w := newPcWorker("panic-pc", svc)
 
-	// 触发 handlePcCreateOffer → manager.GetPeer → nil deref → panic
+	// Trigger handlePcCreateOffer → manager.GetPeer → nil deref → panic
 	f := ipc.NewRequest(1, "pc.createOffer", "panic-pc", "", nil)
 	w.processFrame(f)
 
-	// 应发送错误响应而非崩溃
+	// Should send an error response instead of crashing
 	reader := ipc.NewReader(outBuf)
 	res, err := reader.ReadFrame()
 	if err != nil {
@@ -49,7 +49,7 @@ func TestWorker_PanicRecovery(t *testing.T) {
 		t.Errorf("error = %q, want to contain 'panic'", res.Header.Error)
 	}
 
-	// 后续请求仍可处理（再次 panic，但同样被 recover）
+	// Subsequent request still works (panics again, also recovered)
 	f2 := ipc.NewRequest(2, "pc.createOffer", "panic-pc", "", nil)
 	w.processFrame(f2)
 
@@ -62,7 +62,7 @@ func TestWorker_PanicRecovery(t *testing.T) {
 	}
 }
 
-// TestWorker_QueueDraining 验证 worker goroutine 能正确消费队列中所有帧后退出。
+// TestWorker_QueueDraining verifies the worker goroutine consumes all queued frames then exits.
 func TestWorker_QueueDraining(t *testing.T) {
 	outBuf := &bytes.Buffer{}
 	writer := ipc.NewWriter(outBuf)
@@ -77,7 +77,7 @@ func TestWorker_QueueDraining(t *testing.T) {
 
 	w := newPcWorker("drain-pc", svc)
 
-	// 先入队再启动 worker
+	// Enqueue before starting the worker
 	params, _ := msgpack.Marshal(map[string]interface{}{"pcId": "drain-pc", "iceServers": []interface{}{}})
 	w.queue <- ipc.NewRequest(1, "pc.create", "", "", params)
 
@@ -86,7 +86,7 @@ func TestWorker_QueueDraining(t *testing.T) {
 
 	close(w.queue)
 
-	// worker 应消费所有帧后退出
+	// Worker should consume all frames then exit
 	done := make(chan struct{})
 	go func() {
 		w.run()
@@ -99,7 +99,7 @@ func TestWorker_QueueDraining(t *testing.T) {
 		t.Fatal("worker did not exit after queue closed")
 	}
 
-	// 验证两个请求都产生了响应
+	// Verify both requests produced responses
 	reader := ipc.NewReader(outBuf)
 	for i := 0; i < 2; i++ {
 		res, err := reader.ReadFrame()

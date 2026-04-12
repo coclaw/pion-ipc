@@ -163,8 +163,8 @@ func TestManager_ConcurrentCreateClose(t *testing.T) {
 	wg.Wait()
 }
 
-// 验证 ClosePeer 不阻塞其他 PC 的 GetPeer。
-// 旧实现在 m.mu.Lock 下调 peer.Close()（200~400ms），会阻塞其他 goroutine 的 RLock。
+// Verify ClosePeer does not block GetPeer on other PCs.
+// Old impl held m.mu.Lock during peer.Close() (200-400ms), blocking other goroutines' RLock.
 func TestManager_ClosePeer_DoesNotBlockGetPeer(t *testing.T) {
 	m := newTestManager()
 
@@ -175,17 +175,17 @@ func TestManager_ClosePeer_DoesNotBlockGetPeer(t *testing.T) {
 		t.Fatalf("CreatePeer(pc-2): %v", err)
 	}
 
-	// 在后台关闭 pc-1（pc.Close 需要 200~400ms）
+	// Close pc-1 in background (pc.Close takes 200-400ms)
 	closeDone := make(chan struct{})
 	go func() {
 		_ = m.ClosePeer("pc-1")
 		close(closeDone)
 	}()
 
-	// GetPeer(pc-2) 应在 pc-1 close 完成之前就能返回
+	// GetPeer(pc-2) should return before pc-1 close finishes
 	getPeerDone := make(chan struct{})
 	go func() {
-		// 给 ClosePeer goroutine 一点启动时间
+		// Give the ClosePeer goroutine time to start
 		<-time.After(10 * time.Millisecond)
 		_, err := m.GetPeer("pc-2")
 		if err != nil {
@@ -196,7 +196,7 @@ func TestManager_ClosePeer_DoesNotBlockGetPeer(t *testing.T) {
 
 	select {
 	case <-getPeerDone:
-		// 正常——GetPeer 没被阻塞
+		// OK — GetPeer was not blocked
 	case <-time.After(3 * time.Second):
 		t.Fatal("GetPeer(pc-2) blocked by ClosePeer(pc-1) — lock held during slow close")
 	}
@@ -205,7 +205,7 @@ func TestManager_ClosePeer_DoesNotBlockGetPeer(t *testing.T) {
 	m.CloseAll()
 }
 
-// 验证 CloseAll 完成后 map 已清空，且不持锁调慢操作。
+// Verify CloseAll empties the map and does not hold the lock during slow operations.
 func TestManager_CloseAll_DoesNotBlockGetPeer(t *testing.T) {
 	m := newTestManager()
 
@@ -215,25 +215,25 @@ func TestManager_CloseAll_DoesNotBlockGetPeer(t *testing.T) {
 		}
 	}
 
-	// CloseAll 后台执行
+	// Run CloseAll in background
 	closeAllDone := make(chan struct{})
 	go func() {
 		m.CloseAll()
 		close(closeAllDone)
 	}()
 
-	// 新的 CreatePeer 应该不被长时间阻塞
+	// A new CreatePeer should not be blocked for long
 	createDone := make(chan struct{})
 	go func() {
 		<-time.After(10 * time.Millisecond)
-		// CloseAll 释放锁后 CreatePeer 就能拿到锁
+		// After CloseAll releases the lock, CreatePeer can acquire it
 		_ = m.CreatePeer("pc-new", nil)
 		close(createDone)
 	}()
 
 	select {
 	case <-createDone:
-		// 正常
+		// OK
 	case <-time.After(3 * time.Second):
 		t.Fatal("CreatePeer blocked by CloseAll — lock held during slow close")
 	}

@@ -1,4 +1,4 @@
-.PHONY: build test test-cover lint check verify clean
+.PHONY: build test test-cover lint check verify dist-npm clean
 
 build:
 	CGO_ENABLED=0 go build -ldflags="-s -w" -o bin/pion-ipc ./cmd/pion-ipc
@@ -24,6 +24,9 @@ lint:
 check: lint
 
 verify: check test-cover
+
+dist-npm:
+	bash scripts/build-npm.sh $(VERSION)
 
 clean:
 	rm -rf bin/ dist/ coverage.out

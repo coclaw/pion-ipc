@@ -502,7 +502,7 @@ func TestPeer_CreateDataChannel_SameLabel(t *testing.T) {
 	}
 }
 
-// waitForEvents 轮询 safeBuffer 直到出现指定事件（可能多个），返回所有匹配帧。
+// waitForEvents polls the safeBuffer until one or more matching events appear, returning all matches.
 func waitForEvents(t *testing.T, buf *safeBuffer, eventName string, timeout time.Duration) []*ipc.Frame {
 	t.Helper()
 	deadline := time.After(timeout)
@@ -526,8 +526,8 @@ func waitForEvents(t *testing.T, buf *safeBuffer, eventName string, timeout time
 	}
 }
 
-// newWrappedPeerPair 创建一对 Peer wrapper，带事件收集能力。
-// 返回 peer1 (offerer) 及其 safeBuffer，和原始 pc2 (answerer)。
+// newWrappedPeerPair creates a Peer wrapper pair with event capture.
+// Returns peer1 (offerer) with its safeBuffer, and the raw pc2 (answerer).
 func newWrappedPeerPair(t *testing.T) (*Peer, *safeBuffer, *webrtc.PeerConnection) {
 	t.Helper()
 	pc1, pc2 := newTestPeerPair(t)
@@ -550,7 +550,7 @@ func newWrappedPeerPair(t *testing.T) (*Peer, *safeBuffer, *webrtc.PeerConnectio
 	return peer, sb, pc2
 }
 
-// pollConnectionState 轮询等待 PeerConnection 到达指定状态，不覆盖回调。
+// pollConnectionState polls until the PeerConnection reaches the target state without overwriting callbacks.
 func pollConnectionState(t *testing.T, pc *webrtc.PeerConnection, target webrtc.PeerConnectionState, timeout time.Duration) {
 	t.Helper()
 	deadline := time.After(timeout)
@@ -617,7 +617,7 @@ func TestPeerICEGatheringState(t *testing.T) {
 
 	events := waitForEvents(t, sb, "pc.icegatheringstatechange", 10*time.Second)
 
-	// 应至少收到 gathering 或 complete
+	// Should receive at least gathering or complete
 	states := make(map[string]bool)
 	for _, e := range events {
 		var payload map[string]string
@@ -644,7 +644,7 @@ func TestPeerSignalingState(t *testing.T) {
 
 	doSignaling(t, peer.pc, pc2)
 
-	// 等待 stable 状态出现（doSignaling 完成后 signaling state 应为 stable）
+	// Wait for the stable state (signaling state should be stable after doSignaling)
 	deadline := time.After(5 * time.Second)
 	for {
 		frames := readAllEvents(sb)
@@ -660,7 +660,7 @@ func TestPeerSignalingState(t *testing.T) {
 			states[payload["state"]] = true
 		}
 		if states["have-local-offer"] && states["stable"] {
-			return // 测试通过
+			return // test passed
 		}
 		select {
 		case <-deadline:
@@ -684,10 +684,10 @@ func TestPeerICEConnectionStateIndependent(t *testing.T) {
 	doSignaling(t, peer.pc, pc2)
 	pollConnectionState(t, peer.pc, webrtc.PeerConnectionStateConnected, 10*time.Second)
 
-	// 收集所有 pc.statechange 事件
+	// Collect all pc.statechange events
 	events := waitForEvents(t, sb, "pc.statechange", 10*time.Second)
 
-	// 应有来自 ICE connection state 变化的事件（iceState 非空）
+	// Should have events from ICE connection state changes (non-empty iceState)
 	hasIceState := false
 	for _, e := range events {
 		var payload map[string]string

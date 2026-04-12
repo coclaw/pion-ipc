@@ -1,0 +1,20 @@
+{
+	"name": "@coclaw/pion-ipc-win32-x64",
+	"version": "0.1.0",
+	"description": "pion-ipc binary for Windows x64",
+	"license": "Apache-2.0",
+	"author": "CoClaw <https://coclaw.net>",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/coclaw/pion-ipc.git"
+	},
+	"os": ["win32"],
+	"cpu": ["x64"],
+	"engines": {
+		"node": ">=18"
+	},
+	"preferUnplugged": true,
+	"publishConfig": {
+		"access": "public"
+	}
+}
