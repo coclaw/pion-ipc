@@ -52,15 +52,24 @@ msgpack is a self-describing format, but it does not expose message boundaries �
 - Efficient error handling (decode header first to identify the message, then decide whether to decode the payload).
 - Clean separation between metadata (header) and application data (payload).
 
-### Synchronous Read Loop
+### Per-PC Worker Dispatch
 
-The service runs a single-goroutine read loop that blocks on stdin. Each frame is read, decoded, and dispatched to a handler synchronously. This is intentionally simple:
+The service uses a reader goroutine + per-PC worker goroutine architecture:
 
-- No message reordering concerns.
-- No concurrent handler execution for the same resource.
-- Predictable memory usage.
+```
+stdin → Reader goroutine (dispatcher) → per-PC worker goroutines → Pion → Writer (mutex)
+```
 
-The tradeoff is that a slow handler blocks subsequent reads. In practice, all handlers are fast (Pion API calls return quickly), and asynchronous events (ICE candidates, state changes, DataChannel messages) are emitted from Pion's own goroutines, bypassing the read loop entirely.
+- **Reader goroutine**: Reads frames from stdin and dispatches them to the correct worker by pcId. It never calls any Pion API, keeping latency at µs level.
+- **Per-PC worker**: Each PeerConnection has a dedicated goroutine that consumes frames from a bounded channel (capacity 256) in FIFO order. All Pion API calls for a given PC happen in its worker, ensuring correct operation ordering (e.g., dc.send SSN sequencing, JSEP state machine).
+- **Cross-PC parallelism**: Workers for different PCs run fully in parallel. A slow `pc.close` on one PC (200–400ms SCTP Abort) does not block operations on other PCs.
+
+Worker lifecycle:
+- Created when `pc.create` is dispatched (pcId extracted from payload).
+- Destroyed when `pc.close` is dispatched: frame is enqueued, channel is closed, worker is removed from the map. The worker drains remaining frames and exits.
+- On service shutdown: a `stopped` flag (protected by the same mutex as the worker map) prevents new workers from being created, avoiding a WaitGroup race between the reader goroutine and the shutdown path.
+
+Each worker has panic recovery: if a handler panics, an error response is sent and the worker continues processing subsequent frames.
 
 ### Graceful Exit Strategy
 
@@ -100,9 +109,9 @@ Because pion-ipc runs as a separate process, a crash in the WebRTC stack (segfau
 
 The current implementation focuses exclusively on DataChannels. Audio and video tracks are not yet exposed. The architecture supports this extension — it would require new methods for track management and media negotiation, but the IPC framing and process model remain unchanged.
 
-### Synchronous Read Loop Blocking
+### Lock-Release-Before-Slow-Call
 
-If a handler performs a slow operation (e.g., creating a PeerConnection with a very slow ICE server lookup), it blocks all other request processing. This has not been an issue in practice but could be addressed by dispatching handlers to a goroutine pool.
+Manager.ClosePeer, Peer.Close, and CloseAll release their locks before calling slow `pc.Close()` (~200–400ms). This means there is a brief window where a peer has been removed from the map but its underlying PeerConnection is still alive. This is safe because the per-PC worker model ensures no further requests arrive for a closing peer.
 
 ### Transport Extensibility
 
