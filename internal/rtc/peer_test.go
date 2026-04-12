@@ -671,6 +671,212 @@ func TestPeerSignalingState(t *testing.T) {
 	}
 }
 
+func TestPeer_FullSDPExchangeViaWrapper(t *testing.T) {
+	// Test the full SDP exchange using Peer wrapper methods (CreateOffer, SetLocalDescription,
+	// SetRemoteDescription, CreateAnswer) to exercise the valid "offer"/"answer" code paths.
+	pc1, pc2 := newTestPeerPair(t)
+
+	logBuf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(logBuf, nil))
+	writer := ipc.NewWriter(&bytes.Buffer{})
+
+	peer1 := &Peer{
+		id: "peer-1", pc: pc1, logger: logger.With("pcId", "peer-1"),
+		writer: writer, dcs: make(map[string]*DataChannel),
+	}
+	peer1.iceState.Store("")
+	peer1.connState.Store("")
+
+	peer2 := &Peer{
+		id: "peer-2", pc: pc2, logger: logger.With("pcId", "peer-2"),
+		writer: writer, dcs: make(map[string]*DataChannel),
+	}
+	peer2.iceState.Store("")
+	peer2.connState.Store("")
+
+	defer peer1.Close()
+	defer peer2.Close()
+
+	// Create DC to force media section
+	_, err := peer1.CreateDataChannel("test", true)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	// CreateOffer on peer1
+	offerSDP, err := peer1.CreateOffer()
+	if err != nil {
+		t.Fatalf("CreateOffer: %v", err)
+	}
+	if offerSDP == "" {
+		t.Fatal("offer SDP is empty")
+	}
+
+	// SetLocalDescription on peer1 with offer
+	if err := peer1.SetLocalDescription("offer", offerSDP); err != nil {
+		t.Fatalf("peer1.SetLocalDescription(offer): %v", err)
+	}
+
+	// SetRemoteDescription on peer2 with offer
+	if err := peer2.SetRemoteDescription("offer", offerSDP); err != nil {
+		t.Fatalf("peer2.SetRemoteDescription(offer): %v", err)
+	}
+
+	// CreateAnswer on peer2
+	answerSDP, err := peer2.CreateAnswer()
+	if err != nil {
+		t.Fatalf("CreateAnswer: %v", err)
+	}
+	if answerSDP == "" {
+		t.Fatal("answer SDP is empty")
+	}
+
+	// SetLocalDescription on peer2 with answer
+	if err := peer2.SetLocalDescription("answer", answerSDP); err != nil {
+		t.Fatalf("peer2.SetLocalDescription(answer): %v", err)
+	}
+
+	// SetRemoteDescription on peer1 with answer
+	if err := peer1.SetRemoteDescription("answer", answerSDP); err != nil {
+		t.Fatalf("peer1.SetRemoteDescription(answer): %v", err)
+	}
+
+	// Wait for connected state
+	pollConnectionState(t, pc1, webrtc.PeerConnectionStateConnected, 10*time.Second)
+	pollConnectionState(t, pc2, webrtc.PeerConnectionStateConnected, 10*time.Second)
+}
+
+func TestPeer_AddICECandidate(t *testing.T) {
+	// Test AddICECandidate by doing a full SDP exchange first, then adding an
+	// end-of-candidates signal (empty candidate string).
+	pc1, pc2 := newTestPeerPair(t)
+
+	logBuf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(logBuf, nil))
+	writer := ipc.NewWriter(&bytes.Buffer{})
+
+	peer1 := &Peer{
+		id: "peer-1", pc: pc1, logger: logger.With("pcId", "peer-1"),
+		writer: writer, dcs: make(map[string]*DataChannel),
+	}
+	peer1.iceState.Store("")
+	peer1.connState.Store("")
+
+	defer peer1.Close()
+	defer pc2.Close()
+
+	_, err := pc1.CreateDataChannel("test", nil)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	doSignaling(t, pc1, pc2)
+	pollConnectionState(t, pc1, webrtc.PeerConnectionStateConnected, 10*time.Second)
+
+	// Add an empty ICE candidate (end-of-candidates signal) - should not error
+	err = peer1.AddICECandidate("", "0", 0)
+	if err != nil {
+		t.Fatalf("AddICECandidate: %v", err)
+	}
+}
+
+// Test that a remote DataChannel triggers the OnDataChannel callback on the wrapped Peer,
+// emitting a pc.datachannel event and storing the DC.
+func TestPeer_OnDataChannel_RemoteCreated(t *testing.T) {
+	peer, sb, pc2 := newWrappedPeerPair(t)
+	defer peer.Close()
+	defer pc2.Close()
+
+	// Create DC on pc2 (the remote side) → should trigger OnDataChannel on the wrapped peer
+	_, err := pc2.CreateDataChannel("remote-dc", nil)
+	if err != nil {
+		t.Fatalf("CreateDataChannel on remote: %v", err)
+	}
+
+	// Do signaling with pc2 as the offerer (it created the DC)
+	doSignaling(t, pc2, peer.pc)
+	pollConnectionState(t, peer.pc, webrtc.PeerConnectionStateConnected, 10*time.Second)
+
+	// Wait for pc.datachannel event
+	f := waitForEvent(t, sb, "pc.datachannel", 10*time.Second)
+	if f.Header.PcID != "test-peer" {
+		t.Errorf("pcId = %q, want %q", f.Header.PcID, "test-peer")
+	}
+	if f.Header.DcLabel != "remote-dc" {
+		t.Errorf("dcLabel = %q, want %q", f.Header.DcLabel, "remote-dc")
+	}
+
+	// Verify the DC was stored in the peer's map
+	dc, err := peer.GetDataChannel("remote-dc")
+	if err != nil {
+		t.Fatalf("GetDataChannel after remote create: %v", err)
+	}
+	if dc.Label() != "remote-dc" {
+		t.Errorf("stored DC label = %q", dc.Label())
+	}
+}
+
+// Test ICE candidate event emission from the wrapped Peer.
+func TestPeer_OnICECandidate_EmitsEvent(t *testing.T) {
+	peer, sb, pc2 := newWrappedPeerPair(t)
+	defer peer.Close()
+	defer pc2.Close()
+
+	_, err := peer.pc.CreateDataChannel("test", nil)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	doSignaling(t, peer.pc, pc2)
+
+	// Wait for at least one pc.icecandidate event
+	f := waitForEvent(t, sb, "pc.icecandidate", 10*time.Second)
+	if f.Header.PcID != "test-peer" {
+		t.Errorf("pcId = %q, want %q", f.Header.PcID, "test-peer")
+	}
+
+	// Verify the payload has candidate info
+	var payload map[string]interface{}
+	if err := msgpack.Unmarshal(f.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal icecandidate payload: %v", err)
+	}
+	if _, ok := payload["candidate"]; !ok {
+		t.Error("missing 'candidate' field in ice candidate event")
+	}
+}
+
+// Test connection state change event emission.
+func TestPeer_OnConnectionStateChange_EmitsEvent(t *testing.T) {
+	peer, sb, pc2 := newWrappedPeerPair(t)
+	defer peer.Close()
+	defer pc2.Close()
+
+	_, err := peer.pc.CreateDataChannel("test", nil)
+	if err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+
+	doSignaling(t, peer.pc, pc2)
+	pollConnectionState(t, peer.pc, webrtc.PeerConnectionStateConnected, 10*time.Second)
+
+	// We should see pc.statechange events with connState populated
+	events := waitForEvents(t, sb, "pc.statechange", 10*time.Second)
+	hasConnState := false
+	for _, e := range events {
+		var payload map[string]string
+		if err := msgpack.Unmarshal(e.Payload, &payload); err != nil {
+			continue
+		}
+		if payload["connState"] != "" {
+			hasConnState = true
+			break
+		}
+	}
+	if !hasConnState {
+		t.Error("no pc.statechange event with connState found")
+	}
+}
+
 func TestPeerICEConnectionStateIndependent(t *testing.T) {
 	peer, sb, pc2 := newWrappedPeerPair(t)
 	defer peer.Close()

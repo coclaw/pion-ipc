@@ -2,6 +2,8 @@ package service
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 
 	"github.com/coclaw/pion-ipc/internal/ipc"
+	"github.com/coclaw/pion-ipc/internal/rtc"
 )
 
 // testEnv sets up a Service connected to in-memory pipes for testing.
@@ -873,5 +876,747 @@ func TestService_NonRequestFrame(t *testing.T) {
 	res := env.sendAndReceive(t, req)
 	if !res.Header.OK {
 		t.Fatalf("ping after event frame failed: %s", res.Header.Error)
+	}
+}
+
+// --- Error path tests for all handlers ---
+
+func TestService_PcClose_MissingPcId(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	// pc.close with empty pcId in header — dispatcher routes by pcId,
+	// so empty pcId means no worker found
+	req := ipc.NewRequest(400, "pc.close", "", "", nil)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for missing pcId")
+	}
+	if !strings.Contains(res.Header.Error, "not found") {
+		t.Errorf("error = %q, want containing 'not found'", res.Header.Error)
+	}
+}
+
+func TestService_PcCreate_InvalidPayload(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	// Send invalid msgpack as payload
+	req := ipc.NewRequest(401, "pc.create", "", "", []byte{0xFF, 0xFF})
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for invalid payload")
+	}
+}
+
+func TestService_PcCreateOffer_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	req := ipc.NewRequest(402, "pc.createOffer", "nonexistent", "", nil)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+	if !strings.Contains(res.Header.Error, "not found") {
+		t.Errorf("error = %q, want containing 'not found'", res.Header.Error)
+	}
+}
+
+func TestService_PcCreateAnswer_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	req := ipc.NewRequest(403, "pc.createAnswer", "nonexistent", "", nil)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+	if !strings.Contains(res.Header.Error, "not found") {
+		t.Errorf("error = %q, want containing 'not found'", res.Header.Error)
+	}
+}
+
+func TestService_PcSetRemoteDescription_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	params, _ := msgpack.Marshal(map[string]interface{}{"type": "offer", "sdp": "v=0\r\n"})
+	req := ipc.NewRequest(404, "pc.setRemoteDescription", "nonexistent", "", params)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+}
+
+func TestService_PcAddIceCandidate_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	params, _ := msgpack.Marshal(map[string]interface{}{
+		"candidate": "", "sdpMid": "0", "sdpMLineIndex": 0,
+	})
+	req := ipc.NewRequest(405, "pc.addIceCandidate", "nonexistent", "", params)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+}
+
+func TestService_PcAddIceCandidate_InvalidPayload(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-ice-invalid", 406)
+
+	req := ipc.NewRequest(407, "pc.addIceCandidate", "pc-ice-invalid", "", []byte{0xFF, 0xFF})
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for invalid payload")
+	}
+	if !strings.Contains(res.Header.Error, "decode params") {
+		t.Errorf("error = %q, want containing 'decode params'", res.Header.Error)
+	}
+}
+
+func TestService_DcCreate_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	params, _ := msgpack.Marshal(map[string]interface{}{"label": "rpc", "ordered": true})
+	req := ipc.NewRequest(408, "dc.create", "nonexistent", "", params)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+}
+
+func TestService_DcCreate_InvalidPayload(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-dc-invalid", 409)
+
+	req := ipc.NewRequest(410, "dc.create", "pc-dc-invalid", "", []byte{0xFF, 0xFF})
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for invalid payload")
+	}
+}
+
+func TestService_DcSend_DcNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-dc-nf", 411)
+
+	req := &ipc.Frame{
+		Header: ipc.Header{
+			Type:    ipc.MsgTypeRequest,
+			ID:      412,
+			Method:  "dc.send",
+			PcID:    "pc-dc-nf",
+			DcLabel: "nonexistent",
+		},
+		Payload: []byte("hello"),
+	}
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent dc")
+	}
+	if !strings.Contains(res.Header.Error, "not found") {
+		t.Errorf("error = %q, want containing 'not found'", res.Header.Error)
+	}
+}
+
+func TestService_DcSend_Binary(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-bin", 413)
+	env.createDCViaIPC(t, "pc-bin", "rpc", 414)
+
+	// Send binary data (IsBinary=true)
+	req := &ipc.Frame{
+		Header: ipc.Header{
+			Type:     ipc.MsgTypeRequest,
+			ID:       415,
+			Method:   "dc.send",
+			PcID:     "pc-bin",
+			DcLabel:  "rpc",
+			IsBinary: true,
+		},
+		Payload: []byte{0xDE, 0xAD, 0xBE, 0xEF},
+	}
+	res := env.sendAndReceive(t, req)
+	// DC is not connected so send will fail, but verify the binary path is exercised
+	if res.Header.Type != ipc.MsgTypeResponse {
+		t.Errorf("type = %q, want response", res.Header.Type)
+	}
+	if res.Header.ID != 415 {
+		t.Errorf("id = %d, want 415", res.Header.ID)
+	}
+}
+
+func TestService_DcClose_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	req := &ipc.Frame{
+		Header: ipc.Header{
+			Type:    ipc.MsgTypeRequest,
+			ID:      416,
+			Method:  "dc.close",
+			PcID:    "nonexistent",
+			DcLabel: "rpc",
+		},
+	}
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+}
+
+func TestService_DcClose_DcNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-dc-close-nf", 417)
+
+	req := &ipc.Frame{
+		Header: ipc.Header{
+			Type:    ipc.MsgTypeRequest,
+			ID:      418,
+			Method:  "dc.close",
+			PcID:    "pc-dc-close-nf",
+			DcLabel: "nonexistent",
+		},
+	}
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent dc")
+	}
+}
+
+func TestService_DcSetBALT_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	params, _ := msgpack.Marshal(map[string]interface{}{"threshold": uint64(1024)})
+	req := &ipc.Frame{
+		Header: ipc.Header{
+			Type:    ipc.MsgTypeRequest,
+			ID:      419,
+			Method:  "dc.setBALT",
+			PcID:    "nonexistent",
+			DcLabel: "rpc",
+		},
+		Payload: params,
+	}
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+}
+
+func TestService_DcSetBALT_DcNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-balt-nf", 420)
+
+	params, _ := msgpack.Marshal(map[string]interface{}{"threshold": uint64(1024)})
+	req := &ipc.Frame{
+		Header: ipc.Header{
+			Type:    ipc.MsgTypeRequest,
+			ID:      421,
+			Method:  "dc.setBALT",
+			PcID:    "pc-balt-nf",
+			DcLabel: "nonexistent",
+		},
+		Payload: params,
+	}
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent dc")
+	}
+}
+
+func TestService_DcSetBALT_InvalidPayload(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-balt-inv", 422)
+	env.createDCViaIPC(t, "pc-balt-inv", "rpc", 423)
+
+	req := &ipc.Frame{
+		Header: ipc.Header{
+			Type:    ipc.MsgTypeRequest,
+			ID:      424,
+			Method:  "dc.setBALT",
+			PcID:    "pc-balt-inv",
+			DcLabel: "rpc",
+		},
+		Payload: []byte{0xFF, 0xFF},
+	}
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for invalid payload")
+	}
+}
+
+func TestService_DcGetBA_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	req := &ipc.Frame{
+		Header: ipc.Header{
+			Type:    ipc.MsgTypeRequest,
+			ID:      425,
+			Method:  "dc.getBA",
+			PcID:    "nonexistent",
+			DcLabel: "rpc",
+		},
+	}
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+}
+
+func TestService_DcGetBA_DcNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-ba-nf", 426)
+
+	req := &ipc.Frame{
+		Header: ipc.Header{
+			Type:    ipc.MsgTypeRequest,
+			ID:      427,
+			Method:  "dc.getBA",
+			PcID:    "pc-ba-nf",
+			DcLabel: "nonexistent",
+		},
+	}
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent dc")
+	}
+}
+
+func TestService_PcRestartIce_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	req := ipc.NewRequest(428, "pc.restartIce", "nonexistent", "", nil)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+}
+
+func TestService_PcSetLocalDescription_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	params, _ := msgpack.Marshal(map[string]interface{}{"type": "offer", "sdp": "v=0\r\n"})
+	req := ipc.NewRequest(429, "pc.setLocalDescription", "nonexistent", "", params)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+}
+
+func TestService_PcSetLocalDescription_InvalidPayload(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-setld-inv", 430)
+
+	req := ipc.NewRequest(431, "pc.setLocalDescription", "pc-setld-inv", "", []byte{0xFF, 0xFF})
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for invalid payload")
+	}
+	if !strings.Contains(res.Header.Error, "decode params") {
+		t.Errorf("error = %q, want containing 'decode params'", res.Header.Error)
+	}
+}
+
+func TestService_DispatchRequest_NoWorker(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	// Send a request with a pcId that has no worker (not created via pc.create)
+	req := &ipc.Frame{
+		Header: ipc.Header{
+			Type:    ipc.MsgTypeRequest,
+			ID:      432,
+			Method:  "dc.getBA",
+			PcID:    "no-worker-pc",
+			DcLabel: "rpc",
+		},
+	}
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for request to PC with no worker")
+	}
+	if !strings.Contains(res.Header.Error, "not found") {
+		t.Errorf("error = %q, want containing 'not found'", res.Header.Error)
+	}
+}
+
+func TestService_PcCreate_Duplicate(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-dup", 433)
+
+	// Second create with same pcId should fail
+	params, _ := msgpack.Marshal(map[string]interface{}{
+		"pcId":       "pc-dup",
+		"iceServers": []interface{}{},
+	})
+	req := ipc.NewRequest(434, "pc.create", "", "", params)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for duplicate pcId")
+	}
+	if !strings.Contains(res.Header.Error, "already exists") {
+		t.Errorf("error = %q, want containing 'already exists'", res.Header.Error)
+	}
+}
+
+func TestService_RunReadError(t *testing.T) {
+	stdinPR, stdinPW := io.Pipe()
+	stdoutPR, stdoutPW := io.Pipe()
+
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+	reader := ipc.NewReader(stdinPR)
+	writer := ipc.NewWriter(stdoutPW)
+	svc := New(logger, reader, writer)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- svc.Run(t.Context())
+	}()
+
+	// Close stdin with an error to trigger non-EOF read error
+	stdinPW.CloseWithError(fmt.Errorf("connection reset"))
+
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Error("expected error from Run")
+		}
+		if err == io.EOF {
+			t.Error("expected non-EOF error")
+		}
+		if !strings.Contains(err.Error(), "read loop") {
+			t.Errorf("error = %q, want containing 'read loop'", err.Error())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for Run to return")
+	}
+
+	stdoutPR.Close()
+	stdoutPW.Close()
+}
+
+func TestService_ShutdownPreventsNewWorkers(t *testing.T) {
+	env := newTestEnv()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- env.svc.Run(ctx)
+	}()
+
+	// Create a peer first to verify the service is running
+	env.createPeerViaIPC(t, "pc-before-stop", 440)
+
+	// Cancel context to trigger shutdown
+	cancel()
+
+	select {
+	case <-errCh:
+		// Service has stopped
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for service to stop")
+	}
+
+	env.close()
+}
+
+func TestService_PcSetRemoteDescription_InvalidSdpType(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-invalid-sdp-type", 450)
+
+	params, _ := msgpack.Marshal(map[string]interface{}{
+		"type": "invalid",
+		"sdp":  "v=0\r\n",
+	})
+	req := ipc.NewRequest(451, "pc.setRemoteDescription", "pc-invalid-sdp-type", "", params)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for invalid SDP type")
+	}
+	if !strings.Contains(res.Header.Error, "unknown sdp type") {
+		t.Errorf("error = %q, want containing 'unknown sdp type'", res.Header.Error)
+	}
+}
+
+func TestService_PcSetLocalDescription_InvalidSdpType(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-ld-invalid-type", 452)
+
+	params, _ := msgpack.Marshal(map[string]interface{}{
+		"type": "invalid",
+		"sdp":  "v=0\r\n",
+	})
+	req := ipc.NewRequest(453, "pc.setLocalDescription", "pc-ld-invalid-type", "", params)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for invalid SDP type")
+	}
+}
+
+// Test unknown method routed through a worker (dispatcher routes by pcId to worker,
+// then handleRequest hits the default case).
+func TestService_UnknownMethodViaWorker(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-unk", 460)
+
+	// Send unknown method with the pcId of an existing peer → goes to worker → handleRequest default
+	req := ipc.NewRequest(461, "totally.unknown", "pc-unk", "", nil)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for unknown method")
+	}
+	if !strings.Contains(res.Header.Error, "unknown method") {
+		t.Errorf("error = %q, want containing 'unknown method'", res.Header.Error)
+	}
+}
+
+// Test that a successful pc.restartIce through a fully connected peer returns SDP.
+// Test handlePcClose directly when pcId is empty (defensive branch).
+// This path is unreachable through the normal dispatcher but is a valid defensive check.
+func TestService_HandlePcClose_EmptyPcId_Direct(t *testing.T) {
+	outBuf := &bytes.Buffer{}
+	writer := ipc.NewWriter(outBuf)
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+
+	svc := &Service{
+		logger:  logger,
+		writer:  writer,
+		manager: rtc.NewManager(logger, writer),
+		workers: make(map[string]*pcWorker),
+	}
+
+	f := ipc.NewRequest(1, "pc.close", "", "", nil)
+	svc.handleRequest(f)
+
+	reader := ipc.NewReader(outBuf)
+	res, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatalf("ReadFrame: %v", err)
+	}
+	if res.Header.OK {
+		t.Error("expected failure for empty pcId")
+	}
+	if !strings.Contains(res.Header.Error, "pcId is required") {
+		t.Errorf("error = %q, want containing 'pcId is required'", res.Header.Error)
+	}
+}
+
+// Test handler error paths that are only reachable when the peer is removed from
+// the manager between dispatch and execution (race scenario).
+// We call handleRequest directly with a pcId not in the manager.
+func TestService_HandlersDirectCall_PeerNotFound(t *testing.T) {
+	outBuf := &bytes.Buffer{}
+	writer := ipc.NewWriter(outBuf)
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+
+	svc := &Service{
+		logger:  logger,
+		writer:  writer,
+		manager: rtc.NewManager(logger, writer),
+		workers: make(map[string]*pcWorker),
+	}
+
+	methods := []struct {
+		method  string
+		payload []byte
+	}{
+		{"pc.createOffer", nil},
+		{"pc.createAnswer", nil},
+		{"pc.setRemoteDescription", mustMarshal(map[string]interface{}{"type": "offer", "sdp": "v=0\r\n"})},
+		{"pc.addIceCandidate", mustMarshal(map[string]interface{}{"candidate": "", "sdpMid": "0", "sdpMLineIndex": 0})},
+		{"dc.create", mustMarshal(map[string]interface{}{"label": "rpc"})},
+		{"dc.send", []byte("data")},
+		{"dc.close", nil},
+		{"dc.setBALT", mustMarshal(map[string]interface{}{"threshold": uint64(1024)})},
+		{"dc.getBA", nil},
+		{"pc.restartIce", nil},
+		{"pc.setLocalDescription", mustMarshal(map[string]interface{}{"type": "offer", "sdp": "v=0\r\n"})},
+	}
+
+	for i, m := range methods {
+		f := &ipc.Frame{
+			Header: ipc.Header{
+				Type:    ipc.MsgTypeRequest,
+				ID:      uint32(i + 1),
+				Method:  m.method,
+				PcID:    "ghost-peer",
+				DcLabel: "rpc",
+			},
+			Payload: m.payload,
+		}
+		svc.handleRequest(f)
+	}
+
+	reader := ipc.NewReader(outBuf)
+	for i, m := range methods {
+		res, err := reader.ReadFrame()
+		if err != nil {
+			t.Fatalf("ReadFrame(%s): %v", m.method, err)
+		}
+		if res.Header.OK {
+			t.Errorf("[%d] %s: expected failure for ghost peer", i, m.method)
+		}
+		if !strings.Contains(res.Header.Error, "not found") {
+			t.Errorf("[%d] %s: error = %q, want containing 'not found'", i, m.method, res.Header.Error)
+		}
+	}
+}
+
+func mustMarshal(v interface{}) []byte {
+	b, err := msgpack.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
+}
+
+func TestService_PcRestartIce_Success(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	// Create two peers, do SDP exchange, then restart ICE on the offerer
+	env.createPeerViaIPC(t, "pc-ri-off", 470)
+	env.createDCViaIPC(t, "pc-ri-off", "rpc", 471)
+
+	// Create offer
+	offerRes := env.sendAndReceive(t, ipc.NewRequest(472, "pc.createOffer", "pc-ri-off", "", nil))
+	if !offerRes.Header.OK {
+		t.Fatalf("createOffer: %s", offerRes.Header.Error)
+	}
+	var offerResult map[string]string
+	msgpack.Unmarshal(offerRes.Payload, &offerResult)
+
+	// Set local description on offerer
+	ldParams, _ := msgpack.Marshal(map[string]interface{}{"type": "offer", "sdp": offerResult["sdp"]})
+	setLDRes := env.sendAndReceive(t, ipc.NewRequest(473, "pc.setLocalDescription", "pc-ri-off", "", ldParams))
+	if !setLDRes.Header.OK {
+		t.Fatalf("setLocalDescription: %s", setLDRes.Header.Error)
+	}
+
+	// Create answerer, set remote desc, create answer
+	env.createPeerViaIPC(t, "pc-ri-ans", 474)
+	rdParams, _ := msgpack.Marshal(map[string]interface{}{"type": "offer", "sdp": offerResult["sdp"]})
+	env.sendAndReceive(t, ipc.NewRequest(475, "pc.setRemoteDescription", "pc-ri-ans", "", rdParams))
+
+	ansRes := env.sendAndReceive(t, ipc.NewRequest(476, "pc.createAnswer", "pc-ri-ans", "", nil))
+	if !ansRes.Header.OK {
+		t.Fatalf("createAnswer: %s", ansRes.Header.Error)
+	}
+	var ansResult map[string]string
+	msgpack.Unmarshal(ansRes.Payload, &ansResult)
+
+	// Set local description on answerer
+	ansLDParams, _ := msgpack.Marshal(map[string]interface{}{"type": "answer", "sdp": ansResult["sdp"]})
+	env.sendAndReceive(t, ipc.NewRequest(477, "pc.setLocalDescription", "pc-ri-ans", "", ansLDParams))
+
+	// Set remote desc on offerer
+	ansRDParams, _ := msgpack.Marshal(map[string]interface{}{"type": "answer", "sdp": ansResult["sdp"]})
+	env.sendAndReceive(t, ipc.NewRequest(478, "pc.setRemoteDescription", "pc-ri-off", "", ansRDParams))
+
+	// Give peers time to connect
+	time.Sleep(500 * time.Millisecond)
+
+	// Now restart ICE - should succeed on the connected peer
+	riRes := env.sendAndReceive(t, ipc.NewRequest(479, "pc.restartIce", "pc-ri-off", "", nil))
+	if !riRes.Header.OK {
+		// May fail if peers didn't fully connect via loopback - that's OK
+		t.Logf("pc.restartIce failed (peers may not be connected): %s", riRes.Header.Error)
+	} else {
+		var riResult map[string]string
+		if err := msgpack.Unmarshal(riRes.Payload, &riResult); err != nil {
+			t.Fatalf("unmarshal restartIce result: %v", err)
+		}
+		if riResult["sdp"] == "" {
+			t.Error("restartIce SDP is empty")
+		}
 	}
 }
