@@ -31,14 +31,14 @@ The header is a msgpack map with the following fields:
 | `method`   | string | req      | RPC method name |
 | `pcId`     | string | varies   | PeerConnection identifier |
 | `dcLabel`  | string | varies   | DataChannel label |
-| `ok`       | bool   | res      | `true` for success, absent (falsy) for error |
+| `ok`       | bool   | res      | `true` for success, `false` for error |
 | `error`    | string | res (err)| Error message when request fails |
 | `event`    | string | evt      | Event name |
 | `isBinary` | bool   | varies   | Indicates the payload is binary data (not text) |
 
-**omitempty behavior**: The Go side uses msgpack `omitempty` tags. Fields with zero values (`false`, `0`, `""`) are omitted from the wire encoding. This means:
+**omitempty behavior**: Most fields use msgpack `omitempty` tags — zero values (`0`, `""`, `false`) are omitted from the wire encoding. Exceptions:
 
-- `ok: false` will not appear in the header — the absence of `ok` indicates failure.
+- **`ok`** does **not** have `omitempty`. Both `true` and `false` are always present in response headers.
 - `id: 0` will not appear — request IDs should start at 1.
 - `isBinary: false` will not appear — absence means text/non-binary.
 
@@ -50,7 +50,7 @@ Sent from the host process to pion-ipc. Requires `id` and `method`. The Go proce
 
 ### Response (`type: "res"`)
 
-Sent from pion-ipc to the host. The `id` field matches the originating request. `ok: true` indicates success; absence of `ok` (or `ok: false`) with an `error` field indicates failure.
+Sent from pion-ipc to the host. The `id` field matches the originating request. `ok: true` indicates success; `ok: false` with an `error` field indicates failure.
 
 ### Event (`type: "evt"`)
 
@@ -301,12 +301,12 @@ These libraries are compatible for the data types used in this protocol (strings
 
 ### omitempty and Zero Values
 
-Go's `omitempty` tag causes zero-value fields to be omitted from encoding:
-- `bool` false is omitted — consumers must treat missing `ok` as false.
+Most fields use Go's `omitempty` tag, which omits zero values from encoding:
 - `uint32` 0 is omitted — request IDs must start at 1 to avoid collisions.
 - `string` "" is omitted — empty strings and absent fields are equivalent.
+- `bool` false is omitted for `isBinary` — absence means text/non-binary.
 
-The JS side must handle absent fields gracefully (e.g., `header.ok` being undefined means failure).
+**Exception**: The `ok` field does **not** have `omitempty`. It is always present in response headers (`true` or `false`), so the JS side can check `header.ok === true` directly.
 
 ### uint64 Precision in JavaScript
 
