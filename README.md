@@ -12,7 +12,7 @@ make test         # run tests with race detector
 make lint         # run golangci-lint
 ```
 
-Requires Go 1.23+.
+Requires Go 1.24+.
 
 ## IPC Protocol
 
