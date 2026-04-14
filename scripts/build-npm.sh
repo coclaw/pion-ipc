@@ -31,9 +31,12 @@ NPM_DIR="$ROOT_DIR/npm"
 NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmjs.org/}"
 
 # Platform tuples: npm-name GOOS GOARCH binary-name
+# linux-arm targets armv7l (hard-float, GOARM=7) — covers Raspberry Pi 2/3/4/5
+# running 32-bit Raspberry Pi OS. Node.js 22 publishes official armv7l builds.
 PLATFORMS=(
 	"linux-x64     linux   amd64  pion-ipc"
 	"linux-arm64   linux   arm64  pion-ipc"
+	"linux-arm     linux   arm    pion-ipc"
 	"darwin-x64    darwin  amd64  pion-ipc"
 	"darwin-arm64  darwin  arm64  pion-ipc"
 	"win32-x64     windows amd64  pion-ipc.exe"
@@ -82,12 +85,16 @@ Platform-specific binary of [pion-ipc](https://github.com/coclaw/pion-ipc) for $
 This package is installed automatically by [\`@coclaw/pion-node\`](https://github.com/coclaw/pion-node) via \`optionalDependencies\`. You should not need to install it directly.
 READMEEOF
 
-	# Cross-compile
+	# Cross-compile. For GOARCH=arm pin GOARM=7 (armv7l hard-float) to match
+	# Node.js 22's official linux-armv7l builds; covers modern 32-bit Raspberry
+	# Pi OS. ARMv6 (Pi 1/Zero) is intentionally not supported.
+	goarm_env=""
+	[ "$goarch" = "arm" ] && goarm_env="GOARM=7"
 	mkdir -p "$bin_dir"
 	if [ "$DRY_RUN" = true ]; then
-		echo "  [dry-run] Would build: CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -o $bin_dir/$bin_name"
+		echo "  [dry-run] Would build: CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch ${goarm_env} go build -o $bin_dir/$bin_name"
 	else
-		CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" \
+		env CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" ${goarm_env} \
 			go build -ldflags="-s -w" -o "$bin_dir/$bin_name" ./cmd/pion-ipc
 		echo "  Built: $bin_dir/$bin_name ($(du -h "$bin_dir/$bin_name" | cut -f1))"
 	fi
