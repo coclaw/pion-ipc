@@ -2,6 +2,8 @@ module github.com/coclaw/pion-ipc
 
 go 1.24.0
 
+toolchain go1.24.13
+
 require (
 	github.com/pion/webrtc/v4 v4.0.12
 	github.com/vmihailenco/msgpack/v5 v5.4.1
