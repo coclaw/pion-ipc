@@ -1,6 +1,6 @@
 {
 	"name": "@coclaw/pion-ipc-win32-x64",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "pion-ipc binary for Windows x64",
 	"license": "Apache-2.0",
 	"author": "CoClaw <https://coclaw.net>",
