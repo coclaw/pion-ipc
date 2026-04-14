@@ -30,3 +30,10 @@ jobs:
           go-version: "1.24.x"
       - name: Run tests
         run: go test -race -count=1 ./...
+      - name: Cross-compile smoke (linux/arm, GOARM=7)
+        env:
+          GOOS: linux
+          GOARCH: arm
+          GOARM: "7"
+          CGO_ENABLED: "0"
+        run: go build ./...
