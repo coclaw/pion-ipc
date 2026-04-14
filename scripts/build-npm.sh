@@ -29,7 +29,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 NPM_DIR="$ROOT_DIR/npm"
 NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmjs.org/}"
-NPMMIRROR_REGISTRY="${NPMMIRROR_REGISTRY:-https://registry.npmmirror.com/}"
 
 # Platform tuples: npm-name GOOS GOARCH binary-name
 # linux-arm targets armv7l (hard-float, GOARM=7) — covers Raspberry Pi 2/3/4/5
@@ -158,8 +157,10 @@ while [[ $elapsed -lt $TIMEOUT ]]; do
 				all_done=false
 			fi
 		fi
+		# 镜像检查：不带 --registry 走本机 ~/.npmrc 默认源（按 coclaw 约定配为 npmmirror）。
+		# 与 coclaw/plugins/openclaw/scripts/release-check.sh 保持一致。
 		if [[ "${mirror_ok[$pkg]}" != "true" ]]; then
-			v=$(npm view "$pkg" dist-tags.latest --registry="$NPMMIRROR_REGISTRY" 2>/dev/null) || true
+			v=$(npm view "$pkg" dist-tags.latest 2>/dev/null) || true
 			if [[ "$v" == "$VERSION" ]]; then
 				mirror_ok[$pkg]=true
 				echo "  [npmmirror] $pkg@$VERSION -- OK (${elapsed}s)"
