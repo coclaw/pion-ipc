@@ -170,6 +170,9 @@ type candidateInfo struct {
 	Address  string `msgpack:"address"`
 	Port     uint16 `msgpack:"port"`
 	Protocol string `msgpack:"protocol"`
+	// RelayProtocol 仅在 local 端 candidateType="relay" 时有值（udp/tcp/tls），
+	// 表示 client 与 TURN server 之间的传输协议。remote 端始终为空。
+	RelayProtocol string `msgpack:"relayProtocol,omitempty"`
 }
 
 type candidatePairPayload struct {
@@ -200,12 +203,23 @@ func (p *Peer) emitSelectedCandidatePair() {
 		return
 	}
 
+	// 通过 pc.GetStats() 取本端 candidate 的 relayProtocol（仅 relay 类型有值）。
+	// 这是 client 与 TURN server 间的传输协议（udp/tcp/tls），与 pair.Local.Protocol
+	// （peer 侧 relay 地址协议，恒为 udp）是两个不同概念。
+	localRelayProtocol := ""
+	if stats := p.pc.GetStats(); stats != nil {
+		if ls, ok := stats.GetICECandidateStats(pair.Local); ok {
+			localRelayProtocol = strings.ToLower(ls.RelayProtocol)
+		}
+	}
+
 	cp := candidatePairPayload{
 		Local: candidateInfo{
-			Type:     pair.Local.Typ.String(),
-			Address:  pair.Local.Address,
-			Port:     pair.Local.Port,
-			Protocol: strings.ToLower(pair.Local.Protocol.String()),
+			Type:          pair.Local.Typ.String(),
+			Address:       pair.Local.Address,
+			Port:          pair.Local.Port,
+			Protocol:      strings.ToLower(pair.Local.Protocol.String()),
+			RelayProtocol: localRelayProtocol,
 		},
 		Remote: candidateInfo{
 			Type:     pair.Remote.Typ.String(),

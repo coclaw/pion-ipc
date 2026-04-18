@@ -600,6 +600,14 @@ func TestPeerSelectedCandidatePair(t *testing.T) {
 	if payload.Local.Port == 0 {
 		t.Error("local port is 0")
 	}
+	// 本地回环测试无 TURN server，local candidate 不会是 relay，RelayProtocol 应为空。
+	// TURN 场景下 RelayProtocol 应是 udp/tcp/tls 之一；由 E2E 验证。
+	if payload.Local.RelayProtocol != "" {
+		t.Errorf("local relayProtocol should be empty for non-relay candidate, got %q", payload.Local.RelayProtocol)
+	}
+	if payload.Remote.RelayProtocol != "" {
+		t.Errorf("remote relayProtocol should always be empty, got %q", payload.Remote.RelayProtocol)
+	}
 }
 
 func TestPeerICEGatheringState(t *testing.T) {
