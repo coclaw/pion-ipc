@@ -1,6 +1,6 @@
 {
 	"name": "@coclaw/pion-ipc-linux-arm64",
-	"version": "0.1.2",
+	"version": "0.1.3",
 	"description": "pion-ipc binary for Linux arm64",
 	"license": "Apache-2.0",
 	"author": "CoClaw <https://coclaw.net>",
