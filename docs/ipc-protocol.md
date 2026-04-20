@@ -67,10 +67,25 @@ Create a new PeerConnection.
 | | |
 |---|---|
 | **Header** | `pcId`: unused (passed in payload) |
-| **Payload** | msgpack: `{ pcId: string, iceServers: [{ urls: string[], username?: string, credential?: string }] }` |
+| **Payload** | msgpack: `{ pcId: string, iceServers: [{ urls: string[], username?: string, credential?: string }], settings?: PeerSettings }` |
 | **Response** | No payload (empty) |
 
 The `pcId` is a caller-assigned unique identifier for the PeerConnection. `iceServers` is optional (defaults to empty).
+
+`settings` is optional. If omitted or empty, pion defaults apply. Each field is independently optional — absence means "do not call the corresponding pion setter". Duration fields are **milliseconds** (uint32). Any duration above `300000` (5 minutes) is rejected; call returns an error and no PeerConnection is created.
+
+`PeerSettings` fields:
+
+| Field | Type | Pion setter | Pion default |
+|---|---|---|---|
+| `sctpRtoMax` | uint32 (ms) | `SetSCTPRTOMax` | 60000 |
+| `sctpMaxReceiveBufferSize` | uint32 (bytes) | `SetSCTPMaxReceiveBufferSize` | pion sctp package default |
+| `iceDisconnectedTimeout` | uint32 (ms) | `SetICETimeouts` (arg 1) | 5000 |
+| `iceFailedTimeout` | uint32 (ms) | `SetICETimeouts` (arg 2) | 25000 |
+| `iceKeepAliveInterval` | uint32 (ms) | `SetICETimeouts` (arg 3) | 2000 |
+| `stunGatherTimeout` | uint32 (ms) | `SetSTUNGatherTimeout` | 5000 |
+
+**ICE timeouts merging**: pion's `SetICETimeouts` sets all three values together. If the caller specifies any of `iceDisconnectedTimeout` / `iceFailedTimeout` / `iceKeepAliveInterval`, the other two fall back to the pion defaults above.
 
 ### pc.close
 

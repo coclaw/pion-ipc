@@ -257,7 +257,7 @@ func TestPeer_Wrapper(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
 	writer := ipc.NewWriter(&bytes.Buffer{})
 
-	peer, err := NewPeer("test-peer", nil, logger, writer)
+	peer, err := NewPeer("test-peer", nil, nil, logger, writer)
 	if err != nil {
 		t.Fatalf("NewPeer: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestPeer_GetDataChannel(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
 	writer := ipc.NewWriter(&bytes.Buffer{})
 
-	peer, err := NewPeer("test-peer", nil, logger, writer)
+	peer, err := NewPeer("test-peer", nil, nil, logger, writer)
 	if err != nil {
 		t.Fatalf("NewPeer: %v", err)
 	}
@@ -313,7 +313,7 @@ func TestPeer_SetRemoteDescription_InvalidType(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
 	writer := ipc.NewWriter(&bytes.Buffer{})
 
-	peer, err := NewPeer("test-peer", nil, logger, writer)
+	peer, err := NewPeer("test-peer", nil, nil, logger, writer)
 	if err != nil {
 		t.Fatalf("NewPeer: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestPeer_SetLocalDescription_InvalidType(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
 	writer := ipc.NewWriter(&bytes.Buffer{})
 
-	peer, err := NewPeer("test-peer", nil, logger, writer)
+	peer, err := NewPeer("test-peer", nil, nil, logger, writer)
 	if err != nil {
 		t.Fatalf("NewPeer: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestPeer_Close(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
 	writer := ipc.NewWriter(&bytes.Buffer{})
 
-	peer, err := NewPeer("test-peer", nil, logger, writer)
+	peer, err := NewPeer("test-peer", nil, nil, logger, writer)
 	if err != nil {
 		t.Fatalf("NewPeer: %v", err)
 	}
@@ -406,7 +406,7 @@ func TestPeer_RemoveDataChannel(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
 	writer := ipc.NewWriter(&bytes.Buffer{})
 
-	peer, err := NewPeer("test-peer", nil, logger, writer)
+	peer, err := NewPeer("test-peer", nil, nil, logger, writer)
 	if err != nil {
 		t.Fatalf("NewPeer: %v", err)
 	}
@@ -437,7 +437,7 @@ func TestPeer_Close_ThenCallMethods(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
 	writer := ipc.NewWriter(&bytes.Buffer{})
 
-	peer, err := NewPeer("test-peer", nil, logger, writer)
+	peer, err := NewPeer("test-peer", nil, nil, logger, writer)
 	if err != nil {
 		t.Fatalf("NewPeer: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestPeer_CreateDataChannel_SameLabel(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
 	writer := ipc.NewWriter(&bytes.Buffer{})
 
-	peer, err := NewPeer("test-peer", nil, logger, writer)
+	peer, err := NewPeer("test-peer", nil, nil, logger, writer)
 	if err != nil {
 		t.Fatalf("NewPeer: %v", err)
 	}
@@ -915,5 +915,40 @@ func TestPeerICEConnectionStateIndependent(t *testing.T) {
 	}
 	if !hasIceState {
 		t.Error("no pc.statechange event with non-empty iceState found (ICE connection state should emit statechange)")
+	}
+}
+
+func TestPeer_WithSettings_Succeeds(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+	writer := ipc.NewWriter(&bytes.Buffer{})
+
+	rto := uint32(10000)
+	failed := uint32(15000)
+	settings := &PeerSettings{
+		SctpRtoMax:       &rto,
+		IceFailedTimeout: &failed,
+	}
+	peer, err := NewPeer("test-peer", nil, settings, logger, writer)
+	if err != nil {
+		t.Fatalf("NewPeer with settings: %v", err)
+	}
+	defer peer.Close()
+
+	if _, err := peer.CreateDataChannel("rpc", true); err != nil {
+		t.Fatalf("CreateDataChannel: %v", err)
+	}
+	if _, err := peer.CreateOffer(); err != nil {
+		t.Fatalf("CreateOffer: %v", err)
+	}
+}
+
+func TestPeer_WithInvalidSettings_Fails(t *testing.T) {
+	logger := slog.New(slog.NewJSONHandler(&bytes.Buffer{}, nil))
+	writer := ipc.NewWriter(&bytes.Buffer{})
+
+	bad := uint32(400000) // > maxDurationMs (300000)
+	settings := &PeerSettings{SctpRtoMax: &bad}
+	if _, err := NewPeer("test-peer", nil, settings, logger, writer); err == nil {
+		t.Fatal("expected error for out-of-range sctpRtoMax")
 	}
 }

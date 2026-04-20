@@ -26,7 +26,8 @@ type Peer struct {
 }
 
 // NewPeer creates a new Peer with a pion PeerConnection.
-func NewPeer(id string, iceServers []ICEServer, logger *slog.Logger, writer *ipc.Writer) (*Peer, error) {
+// settings is optional; nil means use pion defaults (equivalent to webrtc.NewPeerConnection).
+func NewPeer(id string, iceServers []ICEServer, settings *PeerSettings, logger *slog.Logger, writer *ipc.Writer) (*Peer, error) {
 	cfg := webrtc.Configuration{}
 	for _, s := range iceServers {
 		cfg.ICEServers = append(cfg.ICEServers, webrtc.ICEServer{
@@ -36,7 +37,12 @@ func NewPeer(id string, iceServers []ICEServer, logger *slog.Logger, writer *ipc
 		})
 	}
 
-	pc, err := webrtc.NewPeerConnection(cfg)
+	se, err := BuildSettingEngine(settings)
+	if err != nil {
+		return nil, fmt.Errorf("build setting engine: %w", err)
+	}
+	api := webrtc.NewAPI(webrtc.WithSettingEngine(se))
+	pc, err := api.NewPeerConnection(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("new peer connection: %w", err)
 	}

@@ -38,7 +38,7 @@ Each frame on stdin/stdout:
 | `event`    | string | Event name (events only)                 |
 | `isBinary` | bool   | Whether payload is binary data           |
 
-**Methods**: `pc.create`, `pc.close`, `pc.createOffer`, `pc.createAnswer`, `pc.setRemoteDescription`, `pc.setLocalDescription`, `pc.addIceCandidate`, `pc.restartIce`, `dc.create`, `dc.send`, `dc.close`, `dc.setBALT`, `dc.getBA`, `ping`
+**Methods**: `pc.create` (accepts optional `settings` for SCTP / ICE / STUN tuning — see [ipc-protocol.md](docs/ipc-protocol.md#pccreate)), `pc.close`, `pc.createOffer`, `pc.createAnswer`, `pc.setRemoteDescription`, `pc.setLocalDescription`, `pc.addIceCandidate`, `pc.restartIce`, `dc.create`, `dc.send`, `dc.close`, `dc.setBALT`, `dc.getBA`, `ping`
 
 **Events**: `pc.icecandidate`, `pc.statechange`, `pc.selectedcandidatepairchange`, `pc.icegatheringstatechange`, `pc.signalingstatechange`, `pc.datachannel`, `dc.open`, `dc.close`, `dc.message`, `dc.error`, `dc.bufferedamountlow`
 

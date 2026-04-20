@@ -210,8 +210,9 @@ func (s *Service) handleRequest(f *ipc.Frame) {
 // --- PeerConnection handlers ---
 
 type pcCreateParams struct {
-	PcID       string          `msgpack:"pcId"`
-	IceServers []rtc.ICEServer `msgpack:"iceServers"`
+	PcID       string            `msgpack:"pcId"`
+	IceServers []rtc.ICEServer   `msgpack:"iceServers"`
+	Settings   *rtc.PeerSettings `msgpack:"settings,omitempty"`
 }
 
 func (s *Service) handlePcCreate(f *ipc.Frame) error {
@@ -222,7 +223,7 @@ func (s *Service) handlePcCreate(f *ipc.Frame) error {
 	if params.PcID == "" {
 		return fmt.Errorf("pcId is required")
 	}
-	if err := s.manager.CreatePeer(params.PcID, params.IceServers); err != nil {
+	if err := s.manager.CreatePeer(params.PcID, params.IceServers, params.Settings); err != nil {
 		return err
 	}
 	return s.writer.SendResponse(f.Header.ID, true, nil, "")

@@ -22,7 +22,7 @@ func TestManager_CreatePeer(t *testing.T) {
 	m := newTestManager()
 	defer m.CloseAll()
 
-	if err := m.CreatePeer("pc-1", nil); err != nil {
+	if err := m.CreatePeer("pc-1", nil, nil); err != nil {
 		t.Fatalf("CreatePeer: %v", err)
 	}
 }
@@ -31,10 +31,10 @@ func TestManager_CreatePeer_Duplicate(t *testing.T) {
 	m := newTestManager()
 	defer m.CloseAll()
 
-	if err := m.CreatePeer("pc-1", nil); err != nil {
+	if err := m.CreatePeer("pc-1", nil, nil); err != nil {
 		t.Fatalf("CreatePeer: %v", err)
 	}
-	err := m.CreatePeer("pc-1", nil)
+	err := m.CreatePeer("pc-1", nil, nil)
 	if err == nil {
 		t.Fatal("expected error for duplicate peer")
 	}
@@ -47,7 +47,7 @@ func TestManager_GetPeer_Success(t *testing.T) {
 	m := newTestManager()
 	defer m.CloseAll()
 
-	if err := m.CreatePeer("pc-1", nil); err != nil {
+	if err := m.CreatePeer("pc-1", nil, nil); err != nil {
 		t.Fatalf("CreatePeer: %v", err)
 	}
 	peer, err := m.GetPeer("pc-1")
@@ -74,7 +74,7 @@ func TestManager_ClosePeer_Success(t *testing.T) {
 	m := newTestManager()
 	defer m.CloseAll()
 
-	if err := m.CreatePeer("pc-1", nil); err != nil {
+	if err := m.CreatePeer("pc-1", nil, nil); err != nil {
 		t.Fatalf("CreatePeer: %v", err)
 	}
 	if err := m.ClosePeer("pc-1"); err != nil {
@@ -102,7 +102,7 @@ func TestManager_CloseAll(t *testing.T) {
 	m := newTestManager()
 
 	for i := 0; i < 3; i++ {
-		if err := m.CreatePeer(strings.Repeat("x", i+1), nil); err != nil {
+		if err := m.CreatePeer(strings.Repeat("x", i+1), nil, nil); err != nil {
 			t.Fatalf("CreatePeer: %v", err)
 		}
 	}
@@ -131,7 +131,7 @@ func TestManager_ConcurrentCreateClose(t *testing.T) {
 		go func(id int) {
 			defer wg.Done()
 			pcID := fmt.Sprintf("pc-%d", id)
-			if err := m.CreatePeer(pcID, nil); err != nil {
+			if err := m.CreatePeer(pcID, nil, nil); err != nil {
 				t.Errorf("CreatePeer(%s): %v", pcID, err)
 			}
 		}(i)
@@ -168,10 +168,10 @@ func TestManager_ConcurrentCreateClose(t *testing.T) {
 func TestManager_ClosePeer_DoesNotBlockGetPeer(t *testing.T) {
 	m := newTestManager()
 
-	if err := m.CreatePeer("pc-1", nil); err != nil {
+	if err := m.CreatePeer("pc-1", nil, nil); err != nil {
 		t.Fatalf("CreatePeer(pc-1): %v", err)
 	}
-	if err := m.CreatePeer("pc-2", nil); err != nil {
+	if err := m.CreatePeer("pc-2", nil, nil); err != nil {
 		t.Fatalf("CreatePeer(pc-2): %v", err)
 	}
 
@@ -210,7 +210,7 @@ func TestManager_CloseAll_DoesNotBlockGetPeer(t *testing.T) {
 	m := newTestManager()
 
 	for i := 0; i < 3; i++ {
-		if err := m.CreatePeer(fmt.Sprintf("pc-%d", i), nil); err != nil {
+		if err := m.CreatePeer(fmt.Sprintf("pc-%d", i), nil, nil); err != nil {
 			t.Fatalf("CreatePeer: %v", err)
 		}
 	}
@@ -227,7 +227,7 @@ func TestManager_CloseAll_DoesNotBlockGetPeer(t *testing.T) {
 	go func() {
 		<-time.After(10 * time.Millisecond)
 		// After CloseAll releases the lock, CreatePeer can acquire it
-		_ = m.CreatePeer("pc-new", nil)
+		_ = m.CreatePeer("pc-new", nil, nil)
 		close(createDone)
 	}()
 
@@ -249,7 +249,29 @@ func TestManager_CreatePeer_WithICEServers(t *testing.T) {
 	servers := []ICEServer{
 		{URLs: []string{"stun:stun.l.google.com:19302"}},
 	}
-	if err := m.CreatePeer("pc-ice", servers); err != nil {
+	if err := m.CreatePeer("pc-ice", servers, nil); err != nil {
 		t.Fatalf("CreatePeer with ICE servers: %v", err)
+	}
+}
+
+func TestManager_CreatePeer_WithSettings(t *testing.T) {
+	m := newTestManager()
+	defer m.CloseAll()
+
+	rto := uint32(10000)
+	settings := &PeerSettings{SctpRtoMax: &rto}
+	if err := m.CreatePeer("pc-settings", nil, settings); err != nil {
+		t.Fatalf("CreatePeer with settings: %v", err)
+	}
+}
+
+func TestManager_CreatePeer_WithInvalidSettings(t *testing.T) {
+	m := newTestManager()
+	defer m.CloseAll()
+
+	bad := uint32(400000)
+	settings := &PeerSettings{SctpRtoMax: &bad}
+	if err := m.CreatePeer("pc-bad", nil, settings); err == nil {
+		t.Fatal("expected error for out-of-range settings")
 	}
 }

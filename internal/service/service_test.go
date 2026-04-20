@@ -136,6 +136,52 @@ func TestService_PcCreate(t *testing.T) {
 	}
 }
 
+func TestService_PcCreate_WithSettings(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	params, _ := msgpack.Marshal(map[string]interface{}{
+		"pcId":       "pc-settings",
+		"iceServers": []interface{}{},
+		"settings": map[string]interface{}{
+			"sctpRtoMax":       uint32(10000),
+			"iceFailedTimeout": uint32(15000),
+		},
+	})
+	req := ipc.NewRequest(2100, "pc.create", "", "", params)
+	res := env.sendAndReceive(t, req)
+
+	if !res.Header.OK {
+		t.Errorf("pc.create with settings failed: %s", res.Header.Error)
+	}
+}
+
+func TestService_PcCreate_InvalidSettings(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	params, _ := msgpack.Marshal(map[string]interface{}{
+		"pcId":       "pc-bad",
+		"iceServers": []interface{}{},
+		"settings": map[string]interface{}{
+			"sctpRtoMax": uint32(400000), // > 300000 ms cap
+		},
+	})
+	req := ipc.NewRequest(2101, "pc.create", "", "", params)
+	res := env.sendAndReceive(t, req)
+
+	if res.Header.OK {
+		t.Error("expected failure for out-of-range settings")
+	}
+	if res.Header.Error == "" {
+		t.Error("expected error message")
+	}
+}
+
 func TestService_PcCreate_MissingPcId(t *testing.T) {
 	env := newTestEnv()
 	defer env.close()

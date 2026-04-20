@@ -26,7 +26,8 @@ func NewManager(logger *slog.Logger, writer *ipc.Writer) *Manager {
 }
 
 // CreatePeer creates a new PeerConnection with the given ID and ICE configuration.
-func (m *Manager) CreatePeer(pcID string, iceServers []ICEServer) error {
+// settings is optional and may be nil (use pion defaults).
+func (m *Manager) CreatePeer(pcID string, iceServers []ICEServer, settings *PeerSettings) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -34,7 +35,7 @@ func (m *Manager) CreatePeer(pcID string, iceServers []ICEServer) error {
 		return fmt.Errorf("peer %q already exists", pcID)
 	}
 
-	peer, err := NewPeer(pcID, iceServers, m.logger, m.writer)
+	peer, err := NewPeer(pcID, iceServers, settings, m.logger, m.writer)
 	if err != nil {
 		return fmt.Errorf("create peer %q: %w", pcID, err)
 	}
