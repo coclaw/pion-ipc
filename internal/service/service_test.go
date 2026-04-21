@@ -1666,3 +1666,43 @@ func TestService_PcRestartIce_Success(t *testing.T) {
 		}
 	}
 }
+
+func TestService_PcGetSctpStats_NotConnected(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	env.createPeerViaIPC(t, "pc-stats", 900)
+
+	req := ipc.NewRequest(901, "pc.getSctpStats", "pc-stats", "", nil)
+	res := env.sendAndReceive(t, req)
+	if !res.Header.OK {
+		t.Fatalf("pc.getSctpStats failed: %s", res.Header.Error)
+	}
+	// Without DTLS handshake the association is nil; msgpack encodes nil
+	// pointer as nil, which decodes back into a nil *rtc.SctpStats.
+	var stats *rtc.SctpStats
+	if err := msgpack.Unmarshal(res.Payload, &stats); err != nil {
+		t.Fatalf("unmarshal stats: %v", err)
+	}
+	if stats != nil {
+		t.Fatalf("expected nil stats for unconnected peer, got %+v", stats)
+	}
+}
+
+func TestService_PcGetSctpStats_PeerNotFound(t *testing.T) {
+	env := newTestEnv()
+	defer env.close()
+
+	go env.svc.Run(t.Context())
+
+	req := ipc.NewRequest(902, "pc.getSctpStats", "nonexistent", "", nil)
+	res := env.sendAndReceive(t, req)
+	if res.Header.OK {
+		t.Error("expected failure for nonexistent peer")
+	}
+	if !strings.Contains(res.Header.Error, "not found") {
+		t.Errorf("error = %q, want containing 'not found'", res.Header.Error)
+	}
+}

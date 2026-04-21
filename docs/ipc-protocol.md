@@ -211,6 +211,35 @@ Get the current buffered amount of a DataChannel.
 | **Payload** | None |
 | **Response** | msgpack: `{ bufferedAmount: uint64 }` |
 
+### pc.getSctpStats
+
+Retrieve a snapshot of the underlying SCTP association's statistics. Returns `nil` when the association has not yet been established (e.g. before DTLS handshake completes, or after close).
+
+| | |
+|---|---|
+| **Header** | `pcId`: required |
+| **Payload** | None |
+| **Response** | msgpack: `SctpStats` or `nil` |
+
+**SctpStats structure**:
+
+| Field | Type | Unit | Description |
+|---|---|---|---|
+| `bytesSent` | uint64 | bytes | Cumulative bytes sent on the SCTP association |
+| `bytesReceived` | uint64 | bytes | Cumulative bytes received on the SCTP association |
+| `srttMs` | float64 | milliseconds | Smoothed round-trip time; `0` before first RTT measurement |
+| `congestionWindow` | uint32 | bytes | Current congestion window (cwnd) |
+| `receiverWindow` | uint32 | bytes | Peer's receiver window (rwnd) |
+| `mtu` | uint32 | bytes | Current MTU |
+
+**Notes**:
+
+- The underlying fields come from pion-webrtc's `SCTPTransportStats` which itself reads pion-sctp's public accessors (`BytesSent/BytesReceived/SRTT/CWND/RWND/MTU`). All are atomic loads, so the call is cheap.
+- SRTT unit conversion: pion-sctp stores ms internally, pion-webrtc scales to seconds; this method scales back to ms so callers see a straightforward number.
+- `nil` response vs. zero values: a freshly created `PeerConnection` with no association returns `nil`. After the SCTP association is established, `mtu` is always non-zero (pion-sctp sets `initialMTU` at creation).
+- **Not exposed**: current RTO, t3RTX backoff level (`nRtos`), inflight chunk count. These fields are not available via pion-sctp's public API in v1.8.36; expose them would require upstream changes or reflection.
+- **Do not call at high frequency**. `pc.GetStats()` walks the PeerConnection's transceivers, candidates, and data channels internally. A 5-10 s sampling cadence is fine; tighter than 1 s in multi-PC scenarios is wasteful.
+
 ### ping
 
 Health check / readiness probe. No payload required, returns an empty success response.

@@ -17,10 +17,10 @@ import (
 // The reader goroutine dispatches requests to per-PC worker goroutines;
 // requests for the same PC are executed serially (FIFO), while different PCs run in parallel.
 type Service struct {
-	logger   *slog.Logger
-	reader   *ipc.Reader
-	writer   *ipc.Writer
-	manager  *rtc.Manager
+	logger    *slog.Logger
+	reader    *ipc.Reader
+	writer    *ipc.Writer
+	manager   *rtc.Manager
 	workersMu sync.Mutex
 	workers   map[string]*pcWorker
 	stopped   bool // guarded by workersMu; prevents new worker creation after shutdown
@@ -195,6 +195,8 @@ func (s *Service) handleRequest(f *ipc.Frame) {
 		err = s.handlePcRestartIce(f)
 	case "pc.setLocalDescription":
 		err = s.handlePcSetLocalDescription(f)
+	case "pc.getSctpStats":
+		err = s.handlePcGetSctpStats(f)
 	case "ping":
 		err = s.writer.SendResponse(f.Header.ID, true, nil, "")
 	default:
@@ -462,4 +464,18 @@ func (s *Service) handlePcSetLocalDescription(f *ipc.Frame) error {
 		return err
 	}
 	return s.writer.SendResponse(f.Header.ID, true, nil, "")
+}
+
+func (s *Service) handlePcGetSctpStats(f *ipc.Frame) error {
+	pcID := f.Header.PcID
+	peer, err := s.manager.GetPeer(pcID)
+	if err != nil {
+		return err
+	}
+	stats := peer.GetSctpStats() // nil when association not yet established
+	payload, err := msgpack.Marshal(stats)
+	if err != nil {
+		return fmt.Errorf("encode stats: %w", err)
+	}
+	return s.writer.SendResponse(f.Header.ID, true, payload, "")
 }

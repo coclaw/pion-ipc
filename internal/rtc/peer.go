@@ -15,10 +15,10 @@ import (
 
 // Peer wraps a single pion PeerConnection.
 type Peer struct {
-	id       string
-	pc       *webrtc.PeerConnection
-	logger   *slog.Logger
-	writer   *ipc.Writer
+	id        string
+	pc        *webrtc.PeerConnection
+	logger    *slog.Logger
+	writer    *ipc.Writer
 	dcs       map[string]*DataChannel
 	mu        sync.RWMutex
 	iceState  atomic.Value // latest ICE connection state (string)
