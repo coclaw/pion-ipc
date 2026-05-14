@@ -84,8 +84,38 @@ The `pcId` is a caller-assigned unique identifier for the PeerConnection. `iceSe
 | `iceFailedTimeout` | uint32 (ms) | `SetICETimeouts` (arg 2) | 25000 |
 | `iceKeepAliveInterval` | uint32 (ms) | `SetICETimeouts` (arg 3) | 2000 |
 | `stunGatherTimeout` | uint32 (ms) | `SetSTUNGatherTimeout` | 5000 |
+| `interfaceFilter` | `InterfaceFilterRule` | `SetInterfaceFilter` | no filter |
+| `ipFilter` | `IPFilterRule` | `SetIPFilter` | no filter |
 
 **ICE timeouts merging**: pion's `SetICETimeouts` sets all three values together. If the caller specifies any of `iceDisconnectedTimeout` / `iceFailedTimeout` / `iceKeepAliveInterval`, the other two fall back to the pion defaults above.
+
+**Candidate filtering** (`interfaceFilter` / `ipFilter`): pion calls these closures during ICE gathering to decide which network interfaces / IPs participate. Filtering happens at the pion gather layer; rejected interfaces never open sockets, so connectivity checks cannot leak through them. Both fields are optional and independent — omitting one keeps pion's default (no filter) for that dimension.
+
+`InterfaceFilterRule` fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `denyPrefixes` | string[] | Interface name prefixes to reject. Match is case-sensitive `strings.HasPrefix`. |
+| `allowPrefixes` | string[] | If non-empty, only interfaces whose name matches one of these prefixes are considered. |
+
+`IPFilterRule` fields:
+
+| Field | Type | Description |
+|---|---|---|
+| `denyCIDRs` | string[] | CIDR ranges (IPv4 or IPv6) whose addresses are rejected. Parsed via Go `net.ParseCIDR`. |
+| `allowCIDRs` | string[] | If non-empty, only addresses inside one of these CIDRs are considered. |
+
+**Rule evaluation order** (same for both filter types):
+
+1. If the allow list is non-empty and the candidate (name / IP) matches none of its entries → drop.
+2. If the deny list contains a match → drop.
+3. Otherwise keep.
+
+On overlap, deny wins over allow.
+
+**Empty rules are no-ops**: a `PeerSettings` carrying `interfaceFilter: {}` or `ipFilter: {}` (both inner lists absent/empty) does not install a filter and pion's default behavior is preserved.
+
+**CIDR parsing errors**: an invalid CIDR string (in either list) causes `pc.create` to fail before the PeerConnection is constructed — no partial filter state is installed.
 
 ### pc.close
 
