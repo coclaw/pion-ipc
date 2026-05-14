@@ -15,26 +15,40 @@ import (
 // reflect+unsafe. The parent struct is unexported, so we can't reach it through plain
 // reflection; the trick is reflect.NewAt with UnsafePointer to rebuild an addressable
 // view. Used only to prove setter installation in tests — production code never does this.
+//
+// If pion ever renames either `candidates` or `InterfaceFilter`, this helper calls t.Fatal
+// with a clear message rather than panicking on UnsafeAddr / type assertion — keeps CI
+// output readable on upstream upgrade.
 func extractInterfaceFilter(t *testing.T, se webrtc.SettingEngine) func(string) bool {
 	t.Helper()
-	v := reflect.ValueOf(&se).Elem().FieldByName("candidates")
-	v = reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem()
-	f := v.FieldByName("InterfaceFilter")
-	if !f.IsValid() || f.IsNil() {
-		return nil
-	}
-	return f.Interface().(func(string) bool)
+	return extractCandidateField[func(string) bool](t, se, "InterfaceFilter")
 }
 
 func extractIPFilter(t *testing.T, se webrtc.SettingEngine) func(net.IP) bool {
 	t.Helper()
-	v := reflect.ValueOf(&se).Elem().FieldByName("candidates")
-	v = reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem()
-	f := v.FieldByName("IPFilter")
-	if !f.IsValid() || f.IsNil() {
-		return nil
+	return extractCandidateField[func(net.IP) bool](t, se, "IPFilter")
+}
+
+func extractCandidateField[T any](t *testing.T, se webrtc.SettingEngine, field string) T {
+	t.Helper()
+	var zero T
+	c := reflect.ValueOf(&se).Elem().FieldByName("candidates")
+	if !c.IsValid() {
+		t.Fatalf("pion SettingEngine has no `candidates` field — upstream layout changed?")
 	}
-	return f.Interface().(func(net.IP) bool)
+	c = reflect.NewAt(c.Type(), unsafe.Pointer(c.UnsafeAddr())).Elem()
+	f := c.FieldByName(field)
+	if !f.IsValid() {
+		t.Fatalf("pion SettingEngine.candidates has no %q field — upstream layout changed?", field)
+	}
+	if f.IsNil() {
+		return zero
+	}
+	v, ok := f.Interface().(T)
+	if !ok {
+		t.Fatalf("pion SettingEngine.candidates.%s type changed — got %T", field, f.Interface())
+	}
+	return v
 }
 
 func u32ptr(v uint32) *uint32 {

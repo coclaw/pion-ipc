@@ -103,8 +103,9 @@ func BuildSettingEngine(s *PeerSettings) (webrtc.SettingEngine, error) {
 		se.SetSTUNGatherTimeout(time.Duration(*s.StunGatherTimeout) * time.Millisecond)
 	}
 
-	// Compile both filters first so an error in either short-circuits before any setter
-	// is invoked — keeps "error" and "partial SettingEngine state" mutually exclusive.
+	// Compile both filters before invoking either filter setter, so a CIDR / prefix
+	// error never coexists with a partially-installed filter. (SCTP / ICE / STUN setters
+	// above can no longer fail at this point; their validation runs before this block.)
 	ifFilter, err := compileInterfaceFilter(s.InterfaceFilter)
 	if err != nil {
 		return se, err
