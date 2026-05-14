@@ -54,6 +54,17 @@ if [[ "$DRY_RUN" == "false" && "$NO_PUBLISH" == "false" ]]; then
 	npm whoami --registry="$NPM_REGISTRY" >/dev/null
 	npm ping --registry="$NPM_REGISTRY" >/dev/null
 	echo "[INFO] 凭据有效"
+
+	# 工作树检查：脚本会改写 npm/*/package.json 的 version 字段并在发布后自动 commit。
+	# 若 npm/ 目录已有未提交改动，会跟脚本的 bump 混在一起，让 commit 范围失控。
+	echo ""
+	echo "[PRE] 检查 npm/ 工作树"
+	if ! git -C "$ROOT_DIR" diff --quiet -- npm/; then
+		echo "[ERROR] npm/ 目录有未提交改动，先 commit/stash 再发版" >&2
+		git -C "$ROOT_DIR" status --short -- npm/ >&2
+		exit 1
+	fi
+	echo "[INFO] npm/ 工作树干净"
 fi
 
 echo ""
@@ -173,6 +184,27 @@ while [[ $elapsed -lt $TIMEOUT ]]; do
 	if [[ "$all_done" == "true" ]]; then
 		echo ""
 		echo "==> Done. All ${#PLATFORMS[@]} platform packages published and verified."
+
+		# Git 自动化：commit version bump + push + tag + push tag
+		# 注意：tag 必须单独 push（一次 push 多 ref 时 GitHub 不触发 workflow，
+		# 历史教训见 commit 2cda45d 之后的 4 tag 批量推事件 2026-05-14）。
+		echo ""
+		echo "[POST] Git: commit + push + tag v${VERSION}"
+		cd "$ROOT_DIR"
+		if git diff --quiet -- npm/; then
+			echo "[INFO] npm/ 无改动（同版本重发？跳过 commit）"
+		else
+			git add npm/*/package.json
+			git commit -m "chore: bump version to ${VERSION} and publish npm packages"
+		fi
+		CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+		echo "[INFO] push branch ${CURRENT_BRANCH}"
+		git push origin "${CURRENT_BRANCH}"
+		echo "[INFO] tag v${VERSION} -> push origin (single tag for workflow trigger)"
+		git tag -a "v${VERSION}" -m "Release v${VERSION}"
+		git push origin "v${VERSION}"
+		echo ""
+		echo "[DONE] tag pushed → .github/workflows/release.yml 会自动 build 并上传 binary"
 		exit 0
 	fi
 
