@@ -6,9 +6,36 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pion/webrtc/v4"
 )
+
+// extractInterfaceFilter peeks at pion's SettingEngine.candidates.InterfaceFilter via
+// reflect+unsafe. The parent struct is unexported, so we can't reach it through plain
+// reflection; the trick is reflect.NewAt with UnsafePointer to rebuild an addressable
+// view. Used only to prove setter installation in tests — production code never does this.
+func extractInterfaceFilter(t *testing.T, se webrtc.SettingEngine) func(string) bool {
+	t.Helper()
+	v := reflect.ValueOf(&se).Elem().FieldByName("candidates")
+	v = reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem()
+	f := v.FieldByName("InterfaceFilter")
+	if !f.IsValid() || f.IsNil() {
+		return nil
+	}
+	return f.Interface().(func(string) bool)
+}
+
+func extractIPFilter(t *testing.T, se webrtc.SettingEngine) func(net.IP) bool {
+	t.Helper()
+	v := reflect.ValueOf(&se).Elem().FieldByName("candidates")
+	v = reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem()
+	f := v.FieldByName("IPFilter")
+	if !f.IsValid() || f.IsNil() {
+		return nil
+	}
+	return f.Interface().(func(net.IP) bool)
+}
 
 func u32ptr(v uint32) *uint32 {
 	return &v
@@ -196,17 +223,63 @@ func TestBuildSettingEngine_EmptyFilterRulesNoOp(t *testing.T) {
 }
 
 func TestBuildSettingEngine_FilterInstalled(t *testing.T) {
-	// Filter installation path: provide non-empty rules so setters are actually invoked.
-	// We cannot DeepEqual against a "want" SettingEngine — closure equality fails.
-	// Behavioral correctness of the filters themselves is covered by CompileInterfaceFilter /
-	// CompileIPFilter tests; here we only assert BuildSettingEngine accepts the rules and
-	// returns without error (i.e. exercises the setter call paths).
-	_, err := BuildSettingEngine(&PeerSettings{
+	// Behavioral test for the filter install path: confirm the SettingEngine
+	// carries the closures pion will consume during ICE gathering, and that those
+	// closures match the rule we passed in. Deleting either setter call inside
+	// BuildSettingEngine should make this test fail.
+	se, err := BuildSettingEngine(&PeerSettings{
 		InterfaceFilter: &InterfaceFilterRule{DenyPrefixes: []string{"docker"}},
 		IPFilter:        &IPFilterRule{DenyCIDRs: []string{"172.16.0.0/12"}},
 	})
 	if err != nil {
 		t.Fatalf("filter install: %v", err)
+	}
+	ifFilter := extractInterfaceFilter(t, se)
+	if ifFilter == nil {
+		t.Fatal("SetInterfaceFilter was not invoked on SettingEngine")
+	}
+	if ifFilter("docker0") {
+		t.Error("docker0 should be dropped after install")
+	}
+	if !ifFilter("eth0") {
+		t.Error("eth0 should pass after install")
+	}
+	ipFilter := extractIPFilter(t, se)
+	if ipFilter == nil {
+		t.Fatal("SetIPFilter was not invoked on SettingEngine")
+	}
+	if ipFilter(net.ParseIP("172.17.0.1")) {
+		t.Error("172.17.0.1 should be dropped after install")
+	}
+	if !ipFilter(net.ParseIP("8.8.8.8")) {
+		t.Error("8.8.8.8 should pass after install")
+	}
+}
+
+func TestBuildSettingEngine_FilterAbsent(t *testing.T) {
+	// Counterpart to FilterInstalled: when no filter rule is given, neither setter
+	// is called and the SettingEngine retains pion's default (filter func == nil).
+	se, err := BuildSettingEngine(&PeerSettings{})
+	if err != nil {
+		t.Fatalf("no filter: %v", err)
+	}
+	if extractInterfaceFilter(t, se) != nil {
+		t.Error("InterfaceFilter should be nil when no rule is provided")
+	}
+	if extractIPFilter(t, se) != nil {
+		t.Error("IPFilter should be nil when no rule is provided")
+	}
+}
+
+func TestBuildSettingEngine_EmptyPrefixReturnsError(t *testing.T) {
+	_, err := BuildSettingEngine(&PeerSettings{
+		InterfaceFilter: &InterfaceFilterRule{DenyPrefixes: []string{""}},
+	})
+	if err == nil {
+		t.Fatal("expected error for empty prefix")
+	}
+	if !strings.Contains(err.Error(), "interfaceFilter.denyPrefixes") {
+		t.Fatalf("error missing label: %v", err)
 	}
 }
 
@@ -240,7 +313,7 @@ func TestBuildSettingEngine_InvalidCIDRReturnsError(t *testing.T) {
 	}
 }
 
-// --- CompileInterfaceFilter ---
+// --- compileInterfaceFilter ---
 
 func TestCompileInterfaceFilter_NilOrEmpty(t *testing.T) {
 	cases := []struct {
@@ -253,7 +326,11 @@ func TestCompileInterfaceFilter_NilOrEmpty(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := CompileInterfaceFilter(c.rule); got != nil {
+			got, err := compileInterfaceFilter(c.rule)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != nil {
 				t.Fatalf("expected nil filter, got non-nil")
 			}
 		})
@@ -261,7 +338,10 @@ func TestCompileInterfaceFilter_NilOrEmpty(t *testing.T) {
 }
 
 func TestCompileInterfaceFilter_DenyOnly(t *testing.T) {
-	f := CompileInterfaceFilter(&InterfaceFilterRule{DenyPrefixes: []string{"docker", "br-", "veth"}})
+	f, err := compileInterfaceFilter(&InterfaceFilterRule{DenyPrefixes: []string{"docker", "br-", "veth"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if f == nil {
 		t.Fatal("expected non-nil filter")
 	}
@@ -283,7 +363,10 @@ func TestCompileInterfaceFilter_DenyOnly(t *testing.T) {
 }
 
 func TestCompileInterfaceFilter_AllowOnly(t *testing.T) {
-	f := CompileInterfaceFilter(&InterfaceFilterRule{AllowPrefixes: []string{"eth", "wlp"}})
+	f, err := compileInterfaceFilter(&InterfaceFilterRule{AllowPrefixes: []string{"eth", "wlp"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if f == nil {
 		t.Fatal("expected non-nil filter")
 	}
@@ -303,10 +386,13 @@ func TestCompileInterfaceFilter_AllowOnly(t *testing.T) {
 
 func TestCompileInterfaceFilter_DenyWinsOnOverlap(t *testing.T) {
 	// allow includes "eth", deny includes "eth1" — "eth1" must be dropped (deny wins).
-	f := CompileInterfaceFilter(&InterfaceFilterRule{
+	f, err := compileInterfaceFilter(&InterfaceFilterRule{
 		AllowPrefixes: []string{"eth"},
 		DenyPrefixes:  []string{"eth1"},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	cases := map[string]bool{
 		"eth0": true,
 		"eth1": false,
@@ -321,7 +407,10 @@ func TestCompileInterfaceFilter_DenyWinsOnOverlap(t *testing.T) {
 }
 
 func TestCompileInterfaceFilter_CaseSensitive(t *testing.T) {
-	f := CompileInterfaceFilter(&InterfaceFilterRule{DenyPrefixes: []string{"docker"}})
+	f, err := compileInterfaceFilter(&InterfaceFilterRule{DenyPrefixes: []string{"docker"}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !f("Docker0") {
 		t.Error("uppercase Docker0 should pass (case-sensitive prefix match)")
 	}
@@ -330,7 +419,65 @@ func TestCompileInterfaceFilter_CaseSensitive(t *testing.T) {
 	}
 }
 
-// --- CompileIPFilter ---
+func TestCompileInterfaceFilter_HasPrefixSemantics(t *testing.T) {
+	// HasPrefix matches any name *starting with* the prefix — there is no word boundary.
+	// Pin this so future readers know `denyPrefixes: ["docker"]` will also drop e.g.
+	// `docker-host-eth0` if such a name exists. Callers who want exact matching should
+	// pass the full name as the prefix.
+	f, err := compileInterfaceFilter(&InterfaceFilterRule{DenyPrefixes: []string{"docker"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]bool{
+		"docker0":          false, // canonical match
+		"docker-test-eth0": false, // also drops (no word boundary; documented behavior)
+		"dock":             true,  // shorter than prefix
+		"dockfront":        true,  // not a prefix match (no trailing "er")
+		"my-docker0":       true,  // prefix is at start only
+	}
+	for name, want := range cases {
+		if got := f(name); got != want {
+			t.Errorf("%q: got keep=%v want %v", name, got, want)
+		}
+	}
+}
+
+func TestCompileInterfaceFilter_EmptyPrefixRejected(t *testing.T) {
+	// HasPrefix(_, "") is always true; a stray "" would silently drop every interface
+	// and quietly break P2P. Treat as a configuration error.
+	cases := []struct {
+		name    string
+		rule    *InterfaceFilterRule
+		wantSub string
+	}{
+		{
+			"empty in denyPrefixes",
+			&InterfaceFilterRule{DenyPrefixes: []string{"docker", ""}},
+			"interfaceFilter.denyPrefixes",
+		},
+		{
+			"empty in allowPrefixes",
+			&InterfaceFilterRule{AllowPrefixes: []string{""}},
+			"interfaceFilter.allowPrefixes",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f, err := compileInterfaceFilter(c.rule)
+			if err == nil {
+				t.Fatalf("expected error, got nil")
+			}
+			if f != nil {
+				t.Fatalf("expected nil filter on error, got non-nil")
+			}
+			if !strings.Contains(err.Error(), c.wantSub) {
+				t.Fatalf("error missing %q substring: %v", c.wantSub, err)
+			}
+		})
+	}
+}
+
+// --- compileIPFilter ---
 
 func TestCompileIPFilter_NilOrEmpty(t *testing.T) {
 	cases := []struct {
@@ -343,7 +490,7 @@ func TestCompileIPFilter_NilOrEmpty(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			f, err := CompileIPFilter(c.rule)
+			f, err := compileIPFilter(c.rule)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -355,7 +502,7 @@ func TestCompileIPFilter_NilOrEmpty(t *testing.T) {
 }
 
 func TestCompileIPFilter_DenyOnly_IPv4(t *testing.T) {
-	f, err := CompileIPFilter(&IPFilterRule{DenyCIDRs: []string{"172.16.0.0/12", "169.254.0.0/16"}})
+	f, err := compileIPFilter(&IPFilterRule{DenyCIDRs: []string{"172.16.0.0/12", "169.254.0.0/16"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +527,7 @@ func TestCompileIPFilter_DenyOnly_IPv4(t *testing.T) {
 }
 
 func TestCompileIPFilter_AllowOnly(t *testing.T) {
-	f, err := CompileIPFilter(&IPFilterRule{AllowCIDRs: []string{"192.168.0.0/16", "10.0.0.0/8"}})
+	f, err := compileIPFilter(&IPFilterRule{AllowCIDRs: []string{"192.168.0.0/16", "10.0.0.0/8"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,7 +546,7 @@ func TestCompileIPFilter_AllowOnly(t *testing.T) {
 
 func TestCompileIPFilter_DenyWinsOnOverlap(t *testing.T) {
 	// allow 10/8 but deny 10.0.0.0/24 — addresses in /24 dropped, others in /8 kept.
-	f, err := CompileIPFilter(&IPFilterRule{
+	f, err := compileIPFilter(&IPFilterRule{
 		AllowCIDRs: []string{"10.0.0.0/8"},
 		DenyCIDRs:  []string{"10.0.0.0/24"},
 	})
@@ -420,7 +567,7 @@ func TestCompileIPFilter_DenyWinsOnOverlap(t *testing.T) {
 }
 
 func TestCompileIPFilter_IPv6(t *testing.T) {
-	f, err := CompileIPFilter(&IPFilterRule{DenyCIDRs: []string{"fe80::/10", "fc00::/7"}})
+	f, err := compileIPFilter(&IPFilterRule{DenyCIDRs: []string{"fe80::/10", "fc00::/7"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,7 +595,7 @@ func TestCompileIPFilter_InvalidCIDR(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			f, err := CompileIPFilter(c.rule)
+			f, err := compileIPFilter(c.rule)
 			if err == nil {
 				t.Fatalf("expected error, got nil")
 			}

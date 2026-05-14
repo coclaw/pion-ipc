@@ -117,6 +117,8 @@ On overlap, deny wins over allow.
 
 **CIDR parsing errors**: an invalid CIDR string (in either list) causes `pc.create` to fail before the PeerConnection is constructed — no partial filter state is installed.
 
+**Empty-string prefixes are rejected**: an entry of `""` in `denyPrefixes` or `allowPrefixes` is treated as a configuration error and fails `pc.create`. `HasPrefix(s, "")` is always true, so accepting it would silently drop every interface and quietly break P2P.
+
 ### pc.close
 
 Close and remove a PeerConnection and all its DataChannels.

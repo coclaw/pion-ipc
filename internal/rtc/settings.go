@@ -103,27 +103,43 @@ func BuildSettingEngine(s *PeerSettings) (webrtc.SettingEngine, error) {
 		se.SetSTUNGatherTimeout(time.Duration(*s.StunGatherTimeout) * time.Millisecond)
 	}
 
-	if f := CompileInterfaceFilter(s.InterfaceFilter); f != nil {
-		se.SetInterfaceFilter(f)
-	}
-	f, err := CompileIPFilter(s.IPFilter)
+	// Compile both filters first so an error in either short-circuits before any setter
+	// is invoked — keeps "error" and "partial SettingEngine state" mutually exclusive.
+	ifFilter, err := compileInterfaceFilter(s.InterfaceFilter)
 	if err != nil {
 		return se, err
 	}
-	if f != nil {
-		se.SetIPFilter(f)
+	ipFilter, err := compileIPFilter(s.IPFilter)
+	if err != nil {
+		return se, err
+	}
+	if ifFilter != nil {
+		se.SetInterfaceFilter(ifFilter)
+	}
+	if ipFilter != nil {
+		se.SetIPFilter(ipFilter)
 	}
 
 	return se, nil
 }
 
-// CompileInterfaceFilter turns an InterfaceFilterRule into a keep-or-drop closure that
-// pion's SettingEngine.SetInterfaceFilter accepts. Returns nil when no filtering applies
-// (nil rule, or both lists empty); the caller should skip the setter in that case so pion's
-// default (no filter) is preserved.
-func CompileInterfaceFilter(rule *InterfaceFilterRule) func(string) bool {
+// compileInterfaceFilter turns an InterfaceFilterRule into a keep-or-drop closure that
+// pion's SettingEngine.SetInterfaceFilter accepts. Returns (nil, nil) when no filtering
+// applies (nil rule, or both lists empty); the caller should skip the setter in that case
+// so pion's default (no filter) is preserved.
+//
+// An empty-string entry in either list is rejected as a configuration error —
+// strings.HasPrefix(name, "") is always true, so a stray "" would silently drop every
+// interface and quietly break P2P.
+func compileInterfaceFilter(rule *InterfaceFilterRule) (func(string) bool, error) {
 	if rule == nil || (len(rule.DenyPrefixes) == 0 && len(rule.AllowPrefixes) == 0) {
-		return nil
+		return nil, nil
+	}
+	if err := rejectEmptyPrefixes("interfaceFilter.denyPrefixes", rule.DenyPrefixes); err != nil {
+		return nil, err
+	}
+	if err := rejectEmptyPrefixes("interfaceFilter.allowPrefixes", rule.AllowPrefixes); err != nil {
+		return nil, err
 	}
 	deny := append([]string(nil), rule.DenyPrefixes...)
 	allow := append([]string(nil), rule.AllowPrefixes...)
@@ -135,14 +151,14 @@ func CompileInterfaceFilter(rule *InterfaceFilterRule) func(string) bool {
 			return false
 		}
 		return true
-	}
+	}, nil
 }
 
-// CompileIPFilter turns an IPFilterRule into a keep-or-drop closure that pion's
+// compileIPFilter turns an IPFilterRule into a keep-or-drop closure that pion's
 // SettingEngine.SetIPFilter accepts. CIDR strings are parsed once up front;
 // any invalid entry causes an error and no filter is installed (no partial state).
 // Returns (nil, nil) when no filtering applies — caller skips the setter.
-func CompileIPFilter(rule *IPFilterRule) (func(net.IP) bool, error) {
+func compileIPFilter(rule *IPFilterRule) (func(net.IP) bool, error) {
 	if rule == nil || (len(rule.DenyCIDRs) == 0 && len(rule.AllowCIDRs) == 0) {
 		return nil, nil
 	}
@@ -163,6 +179,15 @@ func CompileIPFilter(rule *IPFilterRule) (func(net.IP) bool, error) {
 		}
 		return true
 	}, nil
+}
+
+func rejectEmptyPrefixes(label string, items []string) error {
+	for _, p := range items {
+		if p == "" {
+			return fmt.Errorf("%s: empty prefix is not allowed (would match every interface name)", label)
+		}
+	}
+	return nil
 }
 
 func hasAnyPrefix(s string, prefixes []string) bool {
