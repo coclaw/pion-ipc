@@ -7,6 +7,9 @@ dist/
 *.so
 *.dylib
 
+# Generated third-party license notices (produced by scripts/gen-notices.sh)
+/THIRD_PARTY_NOTICES
+
 # Test binary, built with `go test -c`
 *.test
 

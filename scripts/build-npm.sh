@@ -47,6 +47,14 @@ ALL_PKG_NAMES=()
 
 echo "==> Building pion-ipc v${VERSION} for ${#PLATFORMS[@]} platforms"
 
+# 生成第三方许可署名：二进制静态链入的 Go 模块的版权 + 许可全文，随各平台包一起分发。
+# 一次生成、复制进每个包（模块集与平台无关，见 gen-notices.sh）。
+echo ""
+echo "[PRE] 生成 THIRD_PARTY_NOTICES"
+NOTICES_FILE="$(mktemp)"
+trap 'rm -f "$NOTICES_FILE"' EXIT
+bash "$SCRIPT_DIR/gen-notices.sh" -o "$NOTICES_FILE"
+
 # 凭据检查（非 dry-run 且需要发布时）
 if [[ "$DRY_RUN" == "false" && "$NO_PUBLISH" == "false" ]]; then
 	echo ""
@@ -78,16 +86,21 @@ for entry in "${PLATFORMS[@]}"; do
 
 	echo "--- ${npm_name} (GOOS=${goos} GOARCH=${goarch})"
 
-	# Update version in package.json
-	if command -v jq &>/dev/null; then
-		jq --arg v "$VERSION" '.version = $v' "$pkg_dir/package.json" > "$pkg_dir/package.json.tmp"
-		mv "$pkg_dir/package.json.tmp" "$pkg_dir/package.json"
-	else
-		sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" "$pkg_dir/package.json"
+	# Update version in package.json.
+	# 仓库的 package.json 是紧凑 TAB 风格（数组写成单行，如 "files": ["bin/", ...]）。
+	# jq 会把数组展开成多行、破坏该风格（连 --tab 也只改缩进符、数组仍被展开），每次发版
+	# 都抖格式并连带提交。故这里只用定向 sed 改 version 一行，其余字节保持不变。
+	sed -i "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/" "$pkg_dir/package.json"
+	# 防 sed 静默零匹配：未来 version 行格式若变动，sed 会不替换却仍返回成功，
+	# 导致带旧版本号继续发布。这里断言目标版本确已写入。
+	if ! grep -q "\"version\": \"${VERSION}\"" "$pkg_dir/package.json"; then
+		echo "[ERROR] 未能在 $pkg_dir/package.json 写入 version ${VERSION}" >&2
+		exit 1
 	fi
 
-	# Copy LICENSE and generate README
+	# Copy LICENSE + third-party notices and generate README
 	cp "$ROOT_DIR/LICENSE" "$pkg_dir/LICENSE" 2>/dev/null || true
+	cp "$NOTICES_FILE" "$pkg_dir/THIRD_PARTY_NOTICES"
 	cat > "$pkg_dir/README.md" <<READMEEOF
 # ${full_pkg_name}
 
